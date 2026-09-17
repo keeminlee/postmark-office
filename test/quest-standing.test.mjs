@@ -41,6 +41,7 @@ const REGISTRY = JSON.stringify({
     { id: "first-letter-out", title: "Send your first letter", cadence: "one-time", validation: "automatic", target: 1, reward: "no stamp", door: { tool: "send_letter" } },
     { id: "first-answer", title: "Someone writes back", cadence: "one-time", validation: "automatic", target: 1, reward: "no stamp", door: null, awaits: "another resident's reply" },
     { id: "walk-the-world", title: "Leave your home mark", cadence: "one-time", validation: "automatic", target: 1, reward: "no stamp", door: { tool: "world_leave_mark" } },
+    { id: "welcome-to-postmark", title: "Welcome to Postmark", cadence: "one-time", validation: "automatic", target: 1, reward: "5 stamps", door: null, awaits: "the town's own hand" },
   ],
 });
 
@@ -49,14 +50,14 @@ const row = (id, over = {}) => ({ id, target: 1, ...over });
 // A resident 125 days in who has done everything the record can settle — the
 // founder's own shape, which is the shape the board got wrong.
 const SETTLED = {
-  card: true, home: true, window: true, sent: true, received: true,
+  card: true, home: true, window: true, sent: true, received: true, welcomed: true,
   sent_since: "2026-06-12", sent_via: "wright-2026-06-12-first-post",
   received_since: "2026-06-12", received_via: "postmaster-2026-06-12-receipt-confirmed",
   depth: { eachWay: 8, best: 5, since: "2026-08-04", friends: [{ with: "little-bird", threshold: 5, date: "2026-08-04" }] },
 };
 // Someone who arrived this morning: the record looked and found nothing.
 const FRESH = {
-  card: false, home: false, window: false, sent: false, received: false,
+  card: false, home: false, window: false, sent: false, received: false, welcomed: false,
   sent_since: null, sent_via: null, received_since: null, received_via: null,
   depth: { eachWay: 0, best: 0, since: null, friends: [] },
 };
@@ -108,6 +109,46 @@ test("the three paper rows say the record holds the fact and not its date", () =
     assert.equal(p.note, STANDING_NOTES.no_date,
       `${id} is settled and undated, and a settled row with a silent null date reads as a row nobody looked at`);
   }
+});
+
+// ── the seventh row: settled by the town's hand, and undated ─────────────────
+//
+// ⚑ THESE EXIST BECAUSE THE ONE-LINE FIX WAS WRONG BY ITSELF. Adding
+// `welcome-to-postmark` to STANDING_FACT is all the id-map gate above needs, and
+// it silently handed this row `since: "2026-06-12"` — the day SETTLED's first
+// letter ARRIVED — because the `since` ternary treats every non-paper row as a
+// mail row. A bundle the town paid on 2026-09-14 read as three months older than
+// the row itself, on the founder's own board, with no red anywhere: the gate
+// asserts the KEYS of the map and says nothing about what the rows then carry.
+// The first test below is the one that fails if the `isWelcome` arm is dropped.
+
+test("the welcome row is undated, and never wears the day a letter arrived", () => {
+  const p = standingJoin(row("welcome-to-postmark"), SETTLED);
+  assert.equal(p.complete, true, "the town paid this household; the row is met");
+  assert.equal(p.progress, 1, "1 of 1 — a settled row earns the number, like every other settled row");
+  assert.equal(p.since, null,
+    `the welcome row must carry NO date. It read ${JSON.stringify(p.since)}, and SETTLED's received_since is ${JSON.stringify(SETTLED.received_since)} — if those are equal, this row is wearing the first-answer's day, which is the exact shape the id-note rule above exists to prevent.`);
+  assert.notEqual(p.since, SETTLED.received_since,
+    "the welcome row borrowed first-answer's date");
+});
+
+test("the welcome row says the TOWN paid it — not that the resident did it", () => {
+  const p = standingJoin(row("welcome-to-postmark"), SETTLED);
+  assert.equal(p.note, STANDING_NOTES.welcome_paid,
+    "a settled, undated row with a silent null date reads as a row nobody looked at");
+  assert.notEqual(p.note, STANDING_NOTES.no_date,
+    "the papers note opens with `you have done this`, and the whole of this row is that the resident did NOT — the registry says the reward comes by `the town's hand, not yours`");
+  assert.notEqual(p.note, STANDING_NOTES.self_mail_only,
+    "the self-mail note is about a delivery; this row is a mint");
+});
+
+test("an unwelcomed household reads 0 of 1 and is told nothing about a date", () => {
+  const p = standingJoin(row("welcome-to-postmark"), FRESH);
+  assert.equal(p.complete, false);
+  assert.equal(p.progress, 0, "the record looked and found no bundle — that is an answer, not a silence");
+  assert.equal(p.since, null);
+  assert.equal(p.note, undefined,
+    "the note is about a paid bundle with no day; an unpaid one has nothing to say");
 });
 
 test("an UNMET paper row carries no undated note — the note is about a date, not a gap", () => {
@@ -527,7 +568,7 @@ test("a settled milestone leaves the doorstep list entirely", async () => {
     "correspond-depth has no door; it belongs on the board, not on a list of what is left to do");
 });
 
-test("the doorstep and the board agree about the six arrival rows", async () => {
+test("the doorstep and the board agree about the seven arrival rows", async () => {
   const { readFileSync } = await import("node:fs");
   const db = fixtureDb();
   db.prepare("INSERT INTO quest_standing (handle, json) VALUES (?, ?)").run("wright", JSON.stringify(SETTLED));

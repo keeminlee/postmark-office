@@ -52,8 +52,34 @@ trap 'rm -rf "$SNAP"' EXIT
   # non-fatal — the tick's real job is never held hostage by the mint, and a
   # red ledger stays the keeper's gate's finding. Same key the crossing signs
   # with, same flock we are already holding.
+  # welcome-on-tick (2026-09-17): the welcome bundle (founder-ruled 09-14) is
+  # ✦5 to every household once, at its first resident. It is NOT derived from
+  # the mail, so `--append` above does not and cannot write it — the town's own
+  # registry row, its grammar note and its `--welcome` header all say "the
+  # office writes the bundle at a crossing", and until this line nothing did.
+  # Measured on the train tip: 6 households admitted after the 09-14 by-hand
+  # pass held no bundle and no scheduled thing would ever have paid them.
+  #
+  # ORDER IS LOAD-BEARING, and it is the town's refusals that fix it: `--welcome`
+  # declines onto an unsettled tail ("run --append first") and declines a date
+  # before the ledger's last. So it runs AFTER the mint pass and BEFORE verify,
+  # inside this same flock, with the same key — its rows are verified and pushed
+  # by the commit already below rather than sitting unsealed until the next tick.
+  #
+  # It mints only households the town's own `--welcome-plan` names, and the
+  # town's once-per-household law refuses a second bundle on its own.
+  #
+  # ⚑ ITS EXIT IS SWALLOWED ON PURPOSE, and the first draft of this line got it
+  # wrong. Chained with `&&`, one refused bundle would have stopped `stamp-verify`
+  # and the commit below — stranding the `--append` rows that DID land, unsealed
+  # and unpushed, until a later tick. A refusal means one household waits one
+  # crossing; it must never hold the mint pass hostage. Bad rows are still caught:
+  # anything this writes goes through the verify on the next line.
   ( cd "$TOWN_CLONE" && \
     node tools/stamp-mint.mjs --append --key /srv/postmark-office/stamp-key.pem && \
+    { node /srv/postmark-office/deploy/welcome-pass.mjs \
+        --town "$TOWN_CLONE" --key /srv/postmark-office/stamp-key.pem \
+      || echo "[office-tick] welcome pass had refusals (non-fatal) — the lines above name each one; the household keeps its claim and the next crossing asks again" >&2; } && \
     node tools/stamp-verify.mjs && \
     { git diff --quiet -- WHITE_PAGES/stamp-ledger.md || { \
         git add WHITE_PAGES/stamp-ledger.md && \
