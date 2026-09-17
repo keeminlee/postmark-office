@@ -23,7 +23,7 @@
 //       it was asked, so a door that never opened `escrow_projection` fails on
 //       the count even if it somehow produced the right numbers.
 //
-// ── THE FLIP, run 2026-09-17 against commit `a35dd25` of this branch ─────────
+// ── THE FLIP, run 2026-09-17 against commit `976b3de` of this branch ─────────
 //
 // In `src/world2-serve.mjs`'s `/world2/stake` arm, point the twin at the tree:
 // replace the projection read
@@ -36,7 +36,8 @@
 //     const rows = [{ mark, holder: "wright", household: "gh:67605380",
 //                     own_household: "gh:1", n: 3, weight_k: 5 }];
 //
-// and 4 of these 11 go red, the first being:
+// and 5 of these 12 go red — the planted row, the query count, the numbers it
+// moves, the zero case and the torn-ingest refusal. The first is:
 //
 //   not ok 5 - THE PLANTED ROW: a holder that exists only in the store reaches the answer
 //     error: |-

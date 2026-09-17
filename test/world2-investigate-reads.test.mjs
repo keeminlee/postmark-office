@@ -24,7 +24,7 @@
 // the twin is not reading the store. The fixture pool also COUNTS what it was
 // asked, so a door that opened no `marks` query fails on the count alone.
 //
-// ── THE FLIP, run 2026-09-17 against commit `a35dd25` of this branch ─────────
+// ── THE FLIP, run 2026-09-17 against commit `976b3de` of this branch ─────────
 //
 // In `src/world2-serve.mjs`'s `/world2/investigate` arm, point the twin at the
 // tree: replace
@@ -37,11 +37,12 @@
 //     const worldState = (await import("./world-branches.mjs"))
 //       .publishedState(WORLD_CLONE).state;
 //
-// — and the store-only cases go red, the first being:
+// — and 5 of these 11 go red (the three equalities and the two store legs). The
+// one that names the CAUSE rather than a symptom is:
 //
-//   not ok 4 - THE PLANTED MARK: a mark that stands only in the store is investigable
+//   not ok 5 - THE PLANTED MARK: a mark that stands only in the store is investigable
 //     error: |-
-//       Expected values to be strictly equal:
+//       the twin could not find a mark that exists only in the rows — it is reading a tree
 //       404 !== 200
 //
 // Restore with `git checkout -- src/world2-serve.mjs`.

@@ -33,7 +33,7 @@
 // and the pool COUNTS what it was asked, so a door that opened neither table
 // fails on the count even if its numbers looked right.
 //
-// ── THE FLIP, run 2026-09-17 against commit `a35dd25` of this branch ─────────
+// ── THE FLIP, run 2026-09-17 against commit `976b3de` of this branch ─────────
 //
 // In `src/world2-serve.mjs`'s `world2MyMarks`, point the twin at the tree:
 // replace the canon read
@@ -48,11 +48,18 @@
 //       .map((m) => ({ slug: m.id, kind: m.kind, owner: m.by, household: null,
 //                      body: m.body, geometry: { at: m.at, extent: m.extent }, data: { tier: m.tier } }));
 //
-// and 3 of these 12 go red, the first being:
+// and 4 of these 13 go red:
 //
-//   not ok 6 - THE PLANTED MARK: a published row that exists only in the store reaches the answer
+//   not ok 7 - THE PLANTED MARK: a published row that exists only in the store reaches the answer
 //     error: |-
 //       the twin did not see `wright/only-in-the-store` — it is reading a tree
+//
+// ⚑ THE QUERY-COUNT LEG DOES NOT CATCH THIS FLIP, and that is worth knowing
+// rather than discovering later: `publishedIdsFrom` and `publishedMarkFrom`
+// still open `marks` for the overlay's canon half, so the count stays green
+// while the PUBLISHED list is coming off a tree. Counting the store's queries is
+// a weaker instrument than planting a row in it, and here is the case that
+// separates them. Both legs are kept; only one of them would have failed.
 //
 // Restore with `git checkout -- src/world2-serve.mjs`.
 //
