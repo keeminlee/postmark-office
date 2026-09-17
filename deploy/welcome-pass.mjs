@@ -74,8 +74,9 @@
 // bundle, and the ledger is never left half-verified.
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** The town's own household-key grammar (stamp-mint.mjs HOUSEHOLD_KEY). */
 const HOUSEHOLD_KEY_RE = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9._-]*$/;
@@ -238,7 +239,17 @@ export async function main(argv = process.argv.slice(2)) {
   return 0;
 }
 
-// Script only when run as one, so the suite can import the pure halves.
-if (process.argv[1] && process.argv[1].endsWith("welcome-pass.mjs")) {
-  process.exit(await main());
-}
+// ── entry guard ──────────────────────────────────────────────────────────────
+// Script only when run as one, so the suite can import the pure halves and drive
+// `main` in-process. The idiom is settlement-history.mjs's, and the realpath
+// compare is the junction lesson (2026-09-05): `pathToFileURL(process.argv[1])
+// .href === import.meta.url` is FALSE when the entry reaches this file through a
+// Windows junction — the ESM loader realpaths the entry, argv[1] is not — so the
+// tool exits 0 having done nothing, which for THIS tool means a crossing that
+// silently pays no bundles. test/cli-guard.test.mjs spawns it both ways.
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return pathToFileURL(process.argv[1]).href === import.meta.url; }
+})();
+if (isMain) process.exit(await main());
