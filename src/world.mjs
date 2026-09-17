@@ -3773,6 +3773,8 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
       const { crossingDeps } = await import("./world-apex.mjs");
       entry = await enterViaOffice(worldClone, { mark: targetMarkId, handle: who, accept: payload.accept === true }, key, {
         ...crossingDeps(),
+        walking: null,
+        stop: null,
         now: () => arrivedAtCrossing,
         standpointOf: async () => ({ x: toward.x, y: toward.y, name: who }),
       });
