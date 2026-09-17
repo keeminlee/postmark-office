@@ -2378,7 +2378,35 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       // journal would let them claim past it until the drain.
       const held = new Map([...canon.marks, ...live].filter((m) => m.kind === "parcel").map((m) => [m.id, m]));
       const mine = [...held.values()].filter((m) => credOf(m.by ?? m.household) === cred && m.id !== id).length;
-      if (mine >= cap)
+      // ── THE CAP ASKS ONLY OF NEW GROUND, ON THIS DOOR TOO (#2888) ────────
+      //
+      // The law is #2614 / Linear POS-88, ruled on the 2026-09-14 instance and
+      // landed 2026-09-15 in `6f7a889a`: "the CAP applies only to a parcel the
+      // household does not yet hold. An amendment of a held parcel is not a
+      // claim." That commit put the guard in `leave-exec.mjs` and nowhere else
+      // — the condemned git-era door. THIS door, the one prod runs under
+      // WORLD_SINGLE_LOG=1, never received it. One law, two holders, and only
+      // one of them obeyed it; the sibling's falsifiers stayed green over the
+      // gap because they drive the other executor.
+      //
+      // THE INSTANCE, #2888: Current re-amended his flat and was told "your
+      // household already holds four parcels" AFTER POS-88 shipped. #2888 read
+      // that as an id mismatch — the flat is filed under the founder's region
+      // tree, so the door was thought to be looking `<by>/<slug>` up against a
+      // region path and missing. It is not. A mark's id is `by` plus the LEAF
+      // directory (`tools/marks-fold.mjs`: "id = by + leaf"); the filing is a
+      // location, never a namespace; and every parcel in canon carries a
+      // two-segment id. The door FOUND the flat every time.
+      //
+      // The arithmetic is what gives it away, and it is why the exclusion below
+      // is not the fix. That household holds FIVE parcels across seven handles.
+      // `m.id !== id` dropped the one being amended and left FOUR — the very
+      // number he was shown. The exclusion was WORKING. It says a mark may not
+      // count ITSELF against the cap, which is a different sentence from the
+      // ruling above, so it stays exactly as it is and `!amending` carries the
+      // law. Both are needed: without the exclusion a household under the cap
+      // would still lose a slot to its own amendment.
+      if (!amending && mine >= cap)
         throw bounce(403, `your household already holds ${mine} parcel${mine === 1 ? "" : "s"}`,
           `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
 
