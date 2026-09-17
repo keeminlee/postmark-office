@@ -42,14 +42,21 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { readDraftClaims } from "./world2-claims.mjs";
+import { readDraftClaims, householdKeyForKey, withHousehold } from "./world2-claims.mjs";
 import * as live from "../world2/tools/live-reads.mjs";
 import * as talk from "../world2/tools/conversations.mjs";
 import * as apex from "../world2/tools/apex-reads.mjs";
+import * as stakeRead from "../world2/tools/stake-reads.mjs";
+import * as portfolio from "../world2/tools/portfolio-reads.mjs";
+import * as guards from "../world2/tools/guard-reads.mjs";
+import { stakesFromStore } from "../world2/tools/fold-input.mjs";
 // The CANDLE'S OWN escrow reader, not a second one — § THE DOCKET ROW says why.
 import { escrowPresenceAt } from "../world2/tools/escrow-presence.mjs";
 import { freshestMainRef, materializeAtRef } from "./world-branches.mjs";
-import { WORLD_CLONE, placeWordsFrom } from "./world.mjs";
+import { WORLD_CLONE, placeWordsFrom, markPage } from "./world.mjs";
+// 1.0's own backed row, imported rather than restated — see portfolio-reads.mjs
+// § THE DECISIONS ARE NOT RE-EXPRESSED HERE.
+import { backedRow } from "./world-stake.mjs";
 import { CROSSING_DERIVATION, currentCrossing } from "./crossings.mjs";
 import { actorRoster } from "./human-actor.mjs";
 import { stopDepartures } from "./world-movement.mjs";
@@ -127,6 +134,103 @@ export async function world2MyDrafts(key) {
     what: "your household's private compose space — every draft you hold, and nobody else can ask this question about you",
     household, count: drafts.length, drafts,
     privacy: "these stand on no docket, in no export, in no archive, and in no public answer. Submitting one is the act that makes it public, and it crosses once.",
+  };
+}
+
+/**
+ * GET /world2/my-marks — the portfolio, out of rows. The SECOND key-scoped door
+ * in this tier, and it is here beside `world2MyDrafts` for that function's own
+ * reason: `world2Serve`'s signature is `(path, searchParams)`, which has nowhere
+ * to put a credential, so server.mjs calls this directly with the key it holds.
+ *
+ * THE SCOPING IS THE POLICY'S, NOT THIS FUNCTION'S — `world2MyDrafts`'s design,
+ * unchanged: the live read runs inside `withHousehold`, so 007's row policy is
+ * what makes another household's drafts unreturnable and a bug in this file
+ * cannot widen the answer.
+ *
+ * Every list is composed by `portfolio-reads.mjs` and every decision it makes is
+ * 1.0's own function — `markPage` for the bound, `backedRow` for the backed row.
+ * The two fields 1.0 answers that this tier cannot are named on the answer under
+ * `tree_only`; see that module's header for why each is absent rather than
+ * approximated.
+ */
+export async function world2MyMarks(key, { offset = 0, p: injected = null } = {}) {
+  const p = injected ?? await pool();
+  const household = await householdKeyForKey(p, key);
+
+  // The household's roster, from the store's own `identities` projection — the
+  // registry `roll-ingest.mjs` writes ("census decision 1: roster is
+  // REVIEW-class, repo-first"). 1.0 resolves the same question through the town
+  // clone's dated `currentHouseholdOf`; this is that resolution, already made
+  // at the ingested sha and stored.
+  const { rows: handleRows } = await p.query(portfolio.HOUSEHOLD_HANDLES_SQL, [household]);
+  const handles = new Set(handleRows.map((r) => r.handle));
+  const belongs = (h) => handles.has(h);
+
+  // ── the live overlay, inside the policy ──────────────────────────────────
+  const publishedIds = await guards.publishedIdsFrom(p);
+  const publishedMarkOf = await guards.publishedMarkFrom(p);
+  const liveDelta = await withHousehold(p, household, (client) =>
+    guards.pgDraftsForKey(client, {
+      household,
+      // Both spellings, for `pgDraftsForKey`'s own reason: `acts.household`
+      // carried the office key's NAME on every row the mirror wrote, and handing
+      // the port one spelling returns every added and modified mark and no
+      // deleted ones, silently.
+      journalHousehold: household,
+      publishedIds, publishedMarkOf,
+    }));
+
+  // ── canon: what this household's residents have standing ─────────────────
+  const { rows: markRows } = await p.query(portfolio.PORTFOLIO_MARKS_SQL, [[...handles]]);
+  const residents = [...new Set(markRows.map((r) => r.owner).filter(belongs))].sort();
+
+  // ── the ledger: what is staked, and by whom ──────────────────────────────
+  //
+  // `null` is a REFUSAL and never an empty town — `escrowPresenceAt`'s own
+  // discipline, and the reason `backed` may be absent rather than empty here.
+  const { rows: [townHead] } = await p.query("SELECT sha FROM projection_heads WHERE repo = 'town'");
+  let stakeRows = null;
+  let escrowByMark = null;
+  if (townHead?.sha) {
+    try {
+      stakeRows = await stakesFromStore(p, { townSha: townHead.sha });
+      escrowByMark = await escrowPresenceAt((sql, params) => p.query(sql, params), { townSha: townHead.sha });
+    } catch { stakeRows = null; escrowByMark = null; }
+  }
+
+  const stampsOf = (slug) => (escrowByMark == null ? 0 : Number(escrowByMark.get(slug) ?? 0));
+  const liveMarks = liveDelta.marks ?? [];
+  const draftIds = new Set(liveMarks.map((m) => m.id).filter(Boolean));
+  const backedSource = (stakeRows ?? []).filter((row) => belongs(row.holder));
+  const backedIds = new Set(backedSource.map((row) => row.mark));
+
+  // Canon first, the caller's own live layer second — `worldPortfolioStakeSlice`'s
+  // own ordering, and its reason: "canon wins on a shared id, because a published
+  // mark's fields are the town's answer and a draft copy of one is the author's
+  // proposal."
+  const canonRows = markRows.map((r) => portfolio.publishedRowOf(r, { stampsOf }));
+  const byId = new Map([...liveMarks, ...canonRows].map((m) => [m.id, m]));
+  const backed = backedSource
+    .map((row) => backedRow(row, { mark: byId.get(row.mark), belongs }))
+    .sort((a, b) => a.id.localeCompare(b.id) || a.holder.localeCompare(b.holder));
+
+  const published = canonRows
+    .filter((m) => residents.includes(m.by) && !draftIds.has(m.id) && !backedIds.has(m.id))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  const body = portfolio.portfolioAnswerFrom({
+    household, residents, live: liveMarks, published, backed, offset, pager: markPage,
+  });
+
+  return {
+    ...body,
+    // NAMED, NOT SILENT — and `backed` says which absence it is, because a
+    // refusal and an empty ledger are different facts.
+    ...(stakeRows == null ? { backed_unavailable:
+      "the escrow projection could not be read at the ingested town head, so what you have staked is UNKNOWN — not nothing. `backed` and `counts.backed` are empty for that reason and not because you back nothing." } : {}),
+    ...(townHead?.sha ? { escrow_at_town_sha: townHead.sha } : {}),
+    tree_only: portfolio.PORTFOLIO_TREE_ONLY,
   };
 }
 
@@ -410,6 +514,151 @@ export async function world2Serve(path, searchParams, { p: injected = null } = {
       law_sha: head.sha, count: rows.length,
       filters: { kind: kind ?? null, key: key ?? null, kinds: "class · grant · threshold · skeleton · roster" },
       rows,
+    } };
+  }
+
+  // ── THE ESCROW DOOR ───────────────────────────────────────────────────────
+  //
+  // `GET /world/stake?mark=` out of `escrow_projection` instead of out of the
+  // town clone's ledger fold. Keyless, exactly as 1.0 is and for 1.0's own
+  // reason, carried verbatim from `server.mjs:1180`: "escrow is as public as the
+  // ✦weight it produces".
+  //
+  // THE ARITHMETIC IS `stake-reads.mjs`'s and it is the TOWN's, quoted there.
+  // Nothing in this block derives anything — it pins the sha, queries, and
+  // renders, which is this file's whole contract (§ THE LIVE LANE, above).
+  if (path === "/world2/stake") {
+    const mark = searchParams?.get("mark");
+    if (!mark) return { code: 422, body: { error: "bounce", defect: "which mark?", hint: "?mark=<by>/<slug>" } };
+
+    // THE SAME HEAD THE DOCKET NAMES, and for the same reason — see
+    // § docketEscrow: `projection_heads['town']` is what `clearing-job.mjs`
+    // derives its own `townSha` from, so this figure is as-of the sha the next
+    // crossing will also judge on. An un-ingested town REFUSES: "an empty stake
+    // set is indistinguishable from a town where nobody stakes".
+    const { rows: [head] } = await p.query("SELECT sha FROM projection_heads WHERE repo = 'town'");
+    if (!head?.sha) return { code: 503, body: { error: "bounce",
+      defect: "no town sha is ingested",
+      hint: "escrow is as-of a town commit and there is no 'latest'. Until a town head is ingested this door cannot tell an unstaked mark from an unread store, so it refuses rather than answering zero. Run stamp-ingest.mjs." } };
+
+    let answer;
+    try {
+      const { rows } = await p.query(stakeRead.STAKE_ROWS_SQL, [head.sha, mark]);
+      answer = stakeRead.stakeAnswerFrom(rows, { mark, townSha: head.sha });
+    } catch (e) {
+      // A torn ingest is a REFUSAL, never a fold with whichever k came back
+      // first — `stakesFromStore`'s rule, applied to one mark's slice.
+      return { code: 503, body: { error: "bounce", defect: "the escrow projection cannot be folded at this sha",
+        hint: String(e?.message ?? e).slice(0, 240) } };
+    }
+
+    return { code: 200, body: {
+      what: "what the town's stamp ledger holds open on one mark, from escrow_projection at the ingested town head — "
+        + "`stamps` is what residents put in, `ledger_weight` is what the mark carries because of it, and `breadth` is "
+        + "the difference with its reason attached. As-of `escrow_at_town_sha`, not the instant you asked: a stake made "
+        + "since that sha arrives when the town is next ingested, which is the same lag the candle judges under.",
+      ...answer,
+      // THE FRESHNESS STAMP NAMES ITS OWN SOURCE. 1.0 has no equivalent field
+      // because its answer is a live fold of a clone it just read; this tier's
+      // answer is as-of a pinned sha, and a number whose as-of is invisible is
+      // the staleness class this whole lane exists to kill.
+      escrow_at_town_sha: head.sha,
+      // ABSENT AND SAID SO, rather than absent and silent. Both are facts about
+      // a working tree; see stake-reads.mjs § WHAT THE STORE CANNOT ANSWER.
+      tree_only: {
+        retirement: "world-stake.mjs § worldStakeRead calls the town clone's retirementBlocked(TOWN_CLONE, mark, state) — a whole-ledger read, not a per-mark position",
+        proposed: "world-forecast.mjs § forecastForMark folds WORLD/world-state.json at the world clone's main ref to say what the NEXT crossing would make of this mark — two clones, no rows",
+        "holders[] tie order": "1.0 walks the stamp ledger's own APPEND order and then sorts by stamps descending, so equal holders come back in file order. escrow_projection stores a SET of positions; this door breaks ties by holder, declared rather than inherited from the planner",
+      },
+    } };
+  }
+
+  // ── THE INVESTIGATE DOOR ──────────────────────────────────────────────────
+  //
+  // `GET /world/investigate?mark=&depth=` with the world assembled FROM ROWS.
+  //
+  // ⚑ THE ENGINE IS 1.0'S OWN, not a port of it. `verbs.investigate` is the
+  // world repo's function and this door calls it — the only thing that changes
+  // is what it is handed: `apex.worldStateFromMarkRows(markRows)` +
+  // `build.assembleWorld` instead of a folded `WORLD/world-state.json`. That is
+  // exactly the substitution `/world2/apex` already makes one door over, so a
+  // divergence here is about the ROWS and never about the judgment.
+  if (path === "/world2/investigate") {
+    const mark = searchParams?.get("mark");
+    if (!mark) return { code: 422, body: { error: "bounce", defect: "which mark?",
+      hint: "?mark=<by>/<slug> — ids are <by>/<slug>; /world2/marks lists them" } };
+    const askedDepth = Number(searchParams?.get("depth"));
+    const depth = Number.isFinite(askedDepth) ? askedDepth : 1;
+
+    // ⚑ THE SKELETON IS NOT OPTIONAL, AND THE FIRST CUT OF THIS DOOR ASSUMED IT
+    // WAS. `investigate` asks about a MARK rather than a standpoint, so passing
+    // `skeleton: null` looked harmless and reads that way. It is not: the world
+    // is assembled before any verb runs, and `assembleWorld` builds the
+    // heightfield unconditionally —
+    //
+    //     world-build.mjs:75  export function waterControlPoints(skeleton) {
+    //       const wet = (skeleton.features ?? [])…
+    //
+    // — an unguarded dereference, so `skeleton: null` is a TypeError inside the
+    // engine and not a thinner world. Measured 2026-09-17 by this door's own
+    // falsifier before a line of it was believed:
+    //
+    //     TypeError: Cannot read properties of null (reading 'features')
+    //         at waterControlPoints (…/world-build.mjs:75:25)
+    //         at Module.assembleWorld (…/world-build.mjs:133:8)
+    //
+    // So this door pins the law exactly as `/world2/apex` does, and refuses for
+    // the same reason: a world with no terrain is not a smaller answer, it is no
+    // answer at all.
+    const [{ rows: [open] }, { rows: [closed] }, { rows: [lawHead] }] = await Promise.all([
+      p.query("SELECT id, law_sha FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1"),
+      p.query("SELECT id, law_sha FROM windows WHERE status <> 'open' AND law_sha IS NOT NULL ORDER BY id DESC LIMIT 1"),
+      p.query("SELECT sha FROM projection_heads WHERE repo = 'world-law'"),
+    ]);
+    const pin = apex.lawShaFor({ asked: searchParams?.get("law_sha"), openWindow: open, lastClosed: closed, head: lawHead?.sha });
+    if (!pin.law_sha) return { code: 503, body: { error: "bounce", defect: "no law projection ingested yet",
+      hint: "the map is law (census.md D1) and the world cannot be assembled without the terrain skeleton it carries. Run law-ingest." } };
+
+    const [{ rows: markRows }, { rows: lawRows }] = await Promise.all([
+      p.query(apex.MARK_ROWS_SQL),
+      p.query(apex.LAW_ROWS_SQL, [pin.law_sha, apex.LAW_KINDS_FOR_APEX]),
+    ]);
+    const worldState = apex.worldStateFromMarkRows(markRows);
+    const skeleton = apex.skeletonFromLawRows(lawRows);
+    if (!skeleton) return { code: 503, body: { error: "bounce",
+      defect: `the law at ${pin.law_sha.slice(0, 8)} carries no skeleton`,
+      hint: "the world is assembled around its terrain before any mark is judged; a skeleton-less projection cannot be assembled at all." } };
+
+    let eng;
+    try { eng = await engine(); }
+    catch (e) {
+      return { code: 503, body: { error: "bounce", defect: "the world engine cannot be read at this office",
+        hint: `${String(e?.message ?? e).slice(0, 160)}. investigate is the engine's judgment about a mark and its neighbourhood; this door refuses rather than composing one of its own.` } };
+    }
+
+    const world = eng.build.assembleWorld({ worldState, skeleton });
+    const r = eng.verbs.investigate(String(mark), world, { depth });
+
+    // THE MISS IS `r.error`, NOT `!r` — 1.0's own repair, 2026-09-07, found by
+    // its door falsifier: the engine answers a missing mark with a TRUTHY
+    // `{ error: … }`, so a `!r` test never fires. Carried here so the port does
+    // not re-introduce the dead branch the original spent a lane removing.
+    if (!r || r.error) {
+      return { code: 404, body: { error: "bounce", defect: `no mark "${mark}"`,
+        hint: "ids are <by>/<slug> — see /world2/marks",
+        ...(r?.error ? { engine: String(r.error) } : {}) } };
+    }
+
+    return { code: 200, body: {
+      ...r,
+      // The two blocks 1.0 spreads beside the engine's answer are NOT here, and
+      // each is absent for its own reason rather than for one shared excuse.
+      tree_only: {
+        "receipt.crossing · receipt.settlement_sha · receipt.published_at":
+          "mark-receipt.mjs derives the settlement epoch from the world repo's own `settlement/S<n>` git TAGS (settlements.mjs: \"the truth is the world repo's own git TAGS … which exist only when a settlement actually landed\") and from the filing index at a published sha. The store carries no tag and no settlement row — `acts` holds none and there is no settlements table — so the S-number, the sha it blessed and its date cannot be answered here at all. The rest of the receipt (`claims`, canon, the sketchbook) is store-readable and is a second lane's wiring, not a second lane's finding.",
+        stands:
+          "world.mjs § thingStandsBlock reads the DYNAMIC sqlite store (attachments + the holding journal). The rows exist in `acts` and the port exists (`guard-reads.mjs § pgAttachmentsFor` / `pgHolderOf`), so this one is unported rather than unportable — it is wiring, and wiring it inside a read-equality lane would ship an unfalsified answer.",
+      },
     } };
   }
 

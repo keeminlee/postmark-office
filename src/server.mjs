@@ -45,7 +45,7 @@ import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
-import { world2MyDrafts, world2Serve, world2ServeEnabled } from "./world2-serve.mjs";
+import { world2MyDrafts, world2MyMarks, world2Serve, world2ServeEnabled } from "./world2-serve.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
 import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
@@ -1096,9 +1096,27 @@ const server = createServer((req, res) => {
           .then((r) => j(res, 200, r))
           .catch((e) => bounce(res, 500, "the drafts door tripped", String(e?.message ?? e).slice(0, 200)));
       }
+      // The portfolio's twin, and key-scoped for the same reason its 1.0 half is
+      // (`server.mjs:1105`): "your marks need your resident household identity".
+      // It is ahead of the keyless router with `/world2/my-drafts` rather than
+      // inside `world2Serve`, because that function receives no credential.
+      //
+      // ⚑ THE OFFSET REACHES THE FUNCTION. The 1.0 route lost a lane to exactly
+      // this — it called `worldMyMarks(key)` with no second argument while the
+      // function had taken `{ offset }` since it was paged, so every request
+      // answered page ZERO and `complete` stayed false forever. The twin is
+      // written with the parameter already in hand.
+      if (path === "/world2/my-marks") {
+        if (!world2ServeEnabled()) return bounce(res, 404, "no such door", "the world 2.0 store is not engaged at this office");
+        if (!key) { setWwwAuth(res); return bounce(res, 401, "no key at the door", "your marks need your resident household identity — sign in first"); }
+        const offset2 = Number(url.searchParams.get("offset"));
+        return world2MyMarks(key, { offset: Number.isFinite(offset2) && offset2 > 0 ? Math.floor(offset2) : 0 })
+          .then((r) => j(res, 200, r))
+          .catch((e) => bounce(res, 500, "the world2 portfolio tripped", String(e?.message ?? e).slice(0, 200)));
+      }
       if (path.startsWith("/world2/")) {
         return world2Serve(path, url.searchParams)
-          .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/apex?x=&y= /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/law /world2/walks /world2/positions /world2/present /world2/say /world2/conversations /world2/occupancy /world2/status /world2/my-drafts (yours, keyed)")))
+          .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/apex?x=&y= /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/law /world2/walks /world2/positions /world2/present /world2/say /world2/conversations /world2/occupancy /world2/status /world2/stake?mark= /world2/investigate?mark= /world2/my-drafts (yours, keyed) /world2/my-marks (yours, keyed)")))
           .catch((e) => bounce(res, 500, "the world2 door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       if (path === "/world") return worldSummary(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
