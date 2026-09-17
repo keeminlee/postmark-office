@@ -64,7 +64,13 @@
 // hand, on ship day — its receipt is the next window opening at the :00 mark
 // with `closes_at` twelve hours later, in the store's own rows.
 
-const MARK_HOURS = [6, 18]; // the law's two marks, UTC — census.md Decision 3
+// The law's two marks, UTC. The line is `LOGOS/classes.md § crossing ②` on world
+// main — the keeper's settlement, amended 2026-09-17 by keeminlee/postmark-world#96
+// to "S1, S2, … at 06:00 and 18:00 UTC from the w39 ship (2026-09-21), 05:45 and
+// 17:45 UTC until then". NOT `census.md Decision 3`, which earlier drafts cited:
+// that is the postmark-world-2 gold plan in Starstory PULSE, absent from the
+// world tree, and still reading 05:45Z / 17:45Z unamended.
+const MARK_HOURS = [6, 18];
 
 /**
  * The next law mark at or after `iso`. PURE.

@@ -6,9 +6,18 @@
 # cadence, it is a habit, and a habit does not survive the person. This is the
 # runner that ends it.
 #
-# LAW (census.md Decision 3 — the candle cadence, amended 2026-09-17 on world
-# main by the founder's word): windows close 06:00Z and 18:00Z. The timer
+# LAW (world main, `LOGOS/classes.md § crossing ②` — the keeper's settlement,
+# amended 2026-09-17 by keeminlee/postmark-world#96): windows close 06:00Z and
+# 18:00Z from the w39 ship (2026-09-21), 05:45Z and 17:45Z until then. The timer
 # carries those two marks and nothing else.
+#
+# THE LAW LIVES IN THE WORLD TREE, NOT IN A PLAN. Earlier drafts of this header
+# cited `census.md Decision 3`; that is the postmark-world-2 gold plan, signed
+# 2026-08-28, kept in Starstory PULSE and absent from the world repo entirely —
+# and its Decision 3 still reads "05:45Z / 17:45Z, one cadence for all claim
+# classes", unamended. A plan that proposed a cadence is not the line that
+# carries it, and a citation pointing at the plan cannot be checked by anyone
+# holding the world.
 #
 # They were 05:45Z / 17:45Z from the cadence's birth until the w39 ship — fifteen
 # minutes of head start so the Worldkeeper's :00 heartbeat would read a finished
@@ -190,7 +199,8 @@ due_window() {
 # timer fired on the :45:00 marks. So "the open window whose closes_at has
 # passed" found only the PREVIOUS window, and every close ran a full cycle
 # late: 163 closed 09-02 05:45Z, twelve hours after its own boundary; 164 the
-# same at 17:45Z. The marks stay the timer's (census Decision 3 is law); this
+# same at 17:45Z. The marks stay the timer's (`LOGOS/classes.md § crossing ②`
+# is the law); this
 # waits out the offset instead of moving the marks. Bounded at 90s, and a run
 # that starts with a window already due (catch-up, a hand run) waits zero.
 #

@@ -251,9 +251,21 @@ test("both timers carry the law's marks, and nothing else", () => {
     const s = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
     const marks = [...s.matchAll(/^OnCalendar=.*?(\d{2}:\d{2}:\d{2}) UTC\s*$/gm)].map((m) => m[1]);
     assert.deepEqual(marks, ["06:00:00", "18:00:00"],
-      `${f} must carry the law's two marks (census.md Decision 3, amended 2026-09-17) — the repo copy is the live truth, and a timer that disagrees with the law is the whole of #2801`);
+      `${f} must carry the law's two marks (world LOGOS/classes.md § crossing ②, amended 2026-09-17 by postmark-world#96) — the repo copy is the live truth, and a timer that disagrees with the law is the whole of #2801`);
     assert.doesNotMatch(s, /OnCalendar=.*(05:45|17:45)/,
       `${f} still schedules on an old mark`);
+    // ⚑ THE CITATION IS PINNED TOO, and it is not pedantry: the first cut of
+    // this lane cited `census.md Decision 3` everywhere. That is the
+    // postmark-world-2 gold plan — signed 2026-08-28, kept in Starstory PULSE,
+    // ABSENT from the world tree, and its Decision 3 still reads 05:45Z / 17:45Z
+    // unamended. So the unit files pointed at a document that (a) nobody holding
+    // the world can open and (b) contradicts the marks beside the citation. A
+    // wrong pointer to law reads exactly like a right one until someone follows
+    // it, which is why it is worth a falsifier rather than care.
+    assert.doesNotMatch(s, /census/i,
+      `${f} cites census.md — the cadence's law line is world LOGOS/classes.md § crossing ②; census.md is a PULSE gold plan, not in the world tree, and still says 05:45/17:45`);
+    assert.match(s, /classes\.md/,
+      `${f} must name the law line its marks come from`);
   }
 });
 
@@ -263,10 +275,13 @@ test("no LIVE sentence in the clearing or settlement scripts still says :45", ()
   // is a present-tense claim about where the candle sits.
   const clearing = readFileSync(new URL("../deploy/world2-clearing.sh", import.meta.url), "utf8");
   // The § LAW block, unwrapped, so a line break cannot pass or fail this.
-  const lawBlock = clearing.split("# LAW (census.md Decision 3")[1].split("\n#\n")[0].replace(/\n# /g, " ");
-  assert.match(lawBlock, /windows close 06:00Z and 18:00Z/,
+  const lawBlock = clearing.split("# LAW (world main,")[1].split("\n#\n")[0].replace(/\n# /g, " ");
+  assert.match(lawBlock, /windows close 06:00Z and\s+18:00Z from the w39 ship/,
     `world2-clearing.sh § LAW must state the amended marks; it reads: ${JSON.stringify(lawBlock)}`);
-  assert.doesNotMatch(lawBlock, /windows close 05:45Z/, "§ LAW still states the old marks as current");
+  assert.match(lawBlock, /LOGOS\/classes\.md § crossing ②/,
+    "§ LAW must cite the line on world main that actually carries the cadence");
+  assert.doesNotMatch(lawBlock, /census/i,
+    "§ LAW cites census.md — a gold plan in Starstory PULSE, absent from the world tree, still reading 05:45Z / 17:45Z");
   assert.match(clearing.replace(/-\n# /g, "-"), /window-reanchor\.mjs/,
     "the script that cannot move its own chain must name the tool that can");
   const shadow = readFileSync(new URL("../deploy/postmark-settlement-shadow.timer", import.meta.url), "utf8");
