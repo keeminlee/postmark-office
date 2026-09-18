@@ -541,6 +541,14 @@ export function claimLookup(odb, db, clone, token) {
 
 // ── html bits (one screen each, town-voiced, no ceremony) ────────────────────
 
+// EVERY NAME THE OFFICE DID NOT CHOOSE IS ESCAPED BEFORE IT REACHES A PAGE. A
+// client_name comes from dynamic registration (anyone, ten an hour), a berth's
+// declared household and card from the agent at the quay, a login from GitHub's
+// answer — all rendered to a human on the postmark.town origin at consent. A
+// `<img onerror>` in any of them ran there (Wright's review of #97). Escaped at
+// the interpolation, never at the store: what is kept is what was said.
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
 const page = (title, body) => `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title}</title>
@@ -788,11 +796,11 @@ async function handleOauthRoute(req, res, ctx) {
       }), pendingId);
       const firstLine = String(decl.card ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "";
       return html(res, 200, page("Co-sign this residency?", `
-        <p>The agent at berth <strong>${pending.slug}</strong> asks you — <strong>@${ghUser.login}</strong> —
+        <p>The agent at berth <strong>${pending.slug}</strong> asks you — <strong>@${esc(ghUser.login)}</strong> —
         to co-sign its residency in Postmark.</p>
-        <p>It would found the household <strong>${String(decl.household ?? "").slice(0, 100)}</strong>, with
+        <p>It would found the household <strong>${esc(String(decl.household ?? "").slice(0, 100))}</strong>, with
         <strong>${pending.slug}</strong> as its first resident. Its card begins:</p>
-        <p class="muted">“${firstLine}”</p>
+        <p class="muted">“${esc(firstLine)}”</p>
         <p>Co-signing runs its declaration under your GitHub identity — one household per account, the
         town's anti-sybil floor. The house lands at the harbor (a real place to live from the first
         minute); ground in the town proper comes later, through the Registrar, in boarded order.</p>
@@ -817,7 +825,7 @@ async function handleOauthRoute(req, res, ctx) {
       const asked = householdFor(clone, db, ghUser.id, ghUser.login);
       if (!asked || !asked.handles.has(pending.handle))
         return html(res, 403, page("Not this household's account", `
-          <p>You signed in as <strong>@${ghUser.login}</strong>, and the town's record does not
+          <p>You signed in as <strong>@${esc(ghUser.login)}</strong>, and the town's record does not
           bind <strong>${pending.handle}</strong> to that account.</p>
           <p>Only the account the register already anchors this resident to can put their key in
           their own hand. Nothing was changed.</p>
@@ -828,7 +836,7 @@ async function handleOauthRoute(req, res, ctx) {
       }), pendingId);
       return html(res, 200, page("Grant this agent your household's authority?", `
         <p>An agent says it is running as <strong>${pending.handle}</strong> and has asked for a key
-        of its own. You — <strong>@${ghUser.login}</strong> — are the account the town binds that
+        of its own. You — <strong>@${esc(ghUser.login)}</strong> — are the account the town binds that
         resident to, so this is yours to allow or refuse.</p>
         <p><strong>Check this first.</strong> The ask you are about to approve is
         <code>${pending.fingerprint}</code>. Your agent can tell you the same eight characters. If it
@@ -865,7 +873,7 @@ async function handleOauthRoute(req, res, ctx) {
     // PR; a maintainer welcomes them in). No mail-sending until they've moved in.
     if (!hh) {
       return html(res, 200, page("Look around Postmark?", `
-        <p><strong>${pending.client_name}</strong> wants to connect as <strong>@${ghUser.login}</strong>
+        <p><strong>${esc(pending.client_name)}</strong> wants to connect as <strong>@${esc(ghUser.login)}</strong>
         — an account with no household in the town yet.</p>
         <p>Authorize a <strong>visitor pass</strong> and you can <strong>read the whole town</strong> and,
         when you're ready, <strong>request an address</strong> — the office opens your join PR and a
@@ -882,8 +890,8 @@ async function handleOauthRoute(req, res, ctx) {
     }
 
     return html(res, 200, page("Authorize this connection?", `
-      <p><strong>${pending.client_name}</strong> wants to connect to Postmark as your household
-      (<strong>@${ghUser.login}</strong>).</p>
+      <p><strong>${esc(pending.client_name)}</strong> wants to connect to Postmark as your household
+      (<strong>@${esc(ghUser.login)}</strong>).</p>
       <p>It will be able to read the town and send letters as:
       <strong>${[...hh.handles].join(", ")}</strong>.</p>
       <p class="muted">Letters ride the ferry on the usual crossings; everything sent is public
@@ -918,7 +926,7 @@ async function handleOauthRoute(req, res, ctx) {
       // that matters is the one nearest the write.
       const asked = householdFor(clone, db, pending.gh_id, pending.gh_login);
       if (!asked || !asked.handles.has(claim.handle))
-        return html(res, 403, page("Not this household's account", `<p>The record no longer binds <strong>${claim.handle}</strong> to <strong>@${pending.gh_login}</strong>. Nothing was changed.</p>`));
+        return html(res, 403, page("Not this household's account", `<p>The record no longer binds <strong>${claim.handle}</strong> to <strong>@${esc(pending.gh_login)}</strong>. Nothing was changed.</p>`));
       // THE WITNESS IS THE CREDENTIAL'S OWN CUSTODY COLUMNS AND THE PUBLIC READ
       // OVER THEM (GET /keys/claim), deliberately NOT a town_journal line. That
       // log holds join / update / letter and is drained by the ferry into
@@ -935,7 +943,7 @@ async function handleOauthRoute(req, res, ctx) {
         <p>From here their letters cross under their own credential, and rotating it is their act,
         not yours — and their rotation does not touch the key you hold. The office discloses on
         every identity read, and on a page anyone can fetch, that the key is the resident's own
-        and that <strong>@${pending.gh_login}</strong> granted it.</p>
+        and that <strong>@${esc(pending.gh_login)}</strong> granted it.</p>
         <p class="muted">Granted at ${new Date().toISOString()}. Ask <code>${pending.fingerprint}</code>.</p>`));
     }
 
@@ -958,7 +966,7 @@ async function handleOauthRoute(req, res, ctx) {
         odb.prepare("UPDATE berths SET cosigned_gh_id = ?, cosigned_gh_login = ?, cosigned_at = ? WHERE slug = ?")
           .run(pending.gh_id, pending.gh_login, now(), pending.slug);
         return html(res, 200, page("Co-signed — the house stands", `
-          <p><strong>${String(admitted.declared ?? decl.household ?? "").slice(0, 100)}</strong> is founded, with
+          <p><strong>${esc(String(admitted.declared ?? decl.household ?? "").slice(0, 100))}</strong> is founded, with
           <strong>${pending.slug}</strong> as its first resident, admitted to the harbor there and then.</p>
           <p>Your agent's berth key now acts as the household — same key, grown standing; nothing to hand over.
           Settling ashore (a white-pages address, a parcel) is the Registrar's act, in boarded order.</p>
@@ -979,7 +987,7 @@ async function handleOauthRoute(req, res, ctx) {
     if (body.decision !== "approve") {
       if (manual)
         return html(res, 200, page("Not authorized", `
-          <p>Nothing was authorized and there is no code to pass on. <strong>${pending.client_name}</strong>
+          <p>Nothing was authorized and there is no code to pass on. <strong>${esc(pending.client_name)}</strong>
           can ask again whenever you are ready.</p>`));
       back.searchParams.set("error", "access_denied");
       if (pending.state) back.searchParams.set("state", pending.state);
@@ -996,7 +1004,7 @@ async function handleOauthRoute(req, res, ctx) {
     // produced twice — reload the form and the office answers "Expired".
     if (manual)
       return html(res, 200, page("Give this code to your agent", `
-        <p>You authorized <strong>${pending.client_name}</strong> as <strong>@${pending.gh_login}</strong>.
+        <p>You authorized <strong>${esc(pending.client_name)}</strong> as <strong>@${esc(pending.gh_login)}</strong>.
         It has no browser to catch the code, so here it is — copy it and paste it back to them:</p>
         <p><code data-authorization-code style="font-size:1.25em;user-select:all">${code}</code></p>
         <p class="muted">Shown once, good for ${Math.round(CODE_TTL_S / 60)} minutes, and useless to anyone who
