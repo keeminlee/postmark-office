@@ -2782,6 +2782,26 @@ Exit **0** green · **1** RED · **2** cannot run. Every equality reports its ow
 acknowledged divergence to RED and the same run then exits 1 — which is what
 keeps the acknowledgements from becoming a blindfold.
 
+**`records`, and A8 (postmark#2896, 2026-09-17).** A7 on prod found the door
+answering twelve top-level keys to 1.0's thirteen at all fourteen standpoints,
+and the missing one was `records` — "the full mark record for everything
+`within` and `nearby` just named, plus the town's ground". The door now
+composes it the way `world.mjs § markRecords` does (the named ids, then the
+region rings and the water by the engine's own readers, then the mover's
+class), each record in the FOLD'S PUBLISHED SHAPE — `apex-reads.mjs §
+records` vendors the fold's key set from `marks-fold.mjs § the published mark`
+with the blob named. Seven of the fold's fields are on no row and are ABSENT,
+never zero: the escrow figures (`stamps` `weight` `weight_parts`
+`ledger_weight`) and the walk's receipts (`sovereign` `placementParent` `kept`);
+the answer's `disclosed` names them. **A8** compares the id set and then every
+record field by field under `records[<id>].<field>`, so those seven are
+acknowledged by name (AD-5, AD-6) and amber, and any other field going wrong
+is red — a `parent` read off the directory instead of the authored line (the
+first cut's shape, 365 of 365 records), a `tier` the store has not recomputed
+(#2895's ten), a `declared_household` the clearing wrote from a stale roster.
+A8's break in the can-fail proof is a record inside a right block going wrong,
+not the block going missing — that is A7's, and would prove A7 twice.
+
 **The sample is DERIVED, never typed in.** A hardcoded coordinate list rots the
 first time a mark relocates and would keep reporting greens for a class it had
 stopped testing. Each standpoint is a requirement with a finder, and a

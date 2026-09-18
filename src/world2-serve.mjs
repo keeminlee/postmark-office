@@ -71,6 +71,9 @@ import { backedRow } from "./world-stake.mjs";
 import { CROSSING_DERIVATION, currentCrossing } from "./crossings.mjs";
 import { actorRoster } from "./human-actor.mjs";
 import { stopDepartures } from "./world-movement.mjs";
+// The class every reader IS — 1.0's own constant, so the two apexes name the
+// same mark in `records` (world.mjs § markRecords).
+import { STRIDE_MARK_ID } from "./world-classes.mjs";
 
 const state = { pool: null };
 
@@ -116,9 +119,14 @@ async function engine() {
   if (_engine) return _engine;
   const dir = materializeAtRef(WORLD_CLONE, freshestMainRef(WORLD_CLONE), "tools");
   const at = (f) => import(pathToFileURL(join(dir, "tools", f)).href);
-  const [verbs, build, engineMod] = await Promise.all([
-    at("world-verbs.mjs"), at("world-build.mjs"), at("world-engine.mjs")]);
-  _engine = { verbs, build, engine: engineMod, dir };
+  // The three readers the ground set is selected with (`records`, #2896) ride
+  // beside the verbs: the region roster, the ring reader, the water selection —
+  // the same three src/world.mjs § groundMarkIds imports, from the same
+  // published ref, so the twin's floor is chosen by the town's own rules.
+  const [verbs, build, engineMod, regions, geometry, water] = await Promise.all([
+    at("world-verbs.mjs"), at("world-build.mjs"), at("world-engine.mjs"),
+    at("region-outsiders.mjs"), at("geometry.mjs"), at("water.mjs")]);
+  _engine = { verbs, build, engine: engineMod, regions, geometry, water, dir };
   return _engine;
 }
 
@@ -1102,6 +1110,35 @@ export async function world2Apex(searchParams, { p: injected = null } = {}) {
   try { departures = await stopDepartures(worldState, { x: near.x, y: near.y }, { repo: WORLD_CLONE }); }
   catch { departures = null; }   // a schedule that cannot be read must not cost anyone their standpoint
 
+  // ── THE RECORDS THIS READ NAMES (#2896) ──────────────────────────────────
+  //
+  // 1.0's thirteenth key, and the one A7 found missing at all fourteen
+  // standpoints: "the full mark record for everything `within` and `nearby`
+  // just named, plus the town's ground (its region rings and its water), so a
+  // reader never has to go and fetch what this answer already told them
+  // about" — then the mover's own class, so the walk desk can price a stride
+  // (world.mjs § markRecords, 2026-09-13). Same ids, same order, from the
+  // world this answer was just judged over. `nearby` here is the final list:
+  // this door composes no portal, so there is no loose-thing injection to
+  // take the ids after (1.0's note on `withLoose` applies to the standpoint
+  // classes this door does not serve).
+  //
+  // Each record is the fold's PUBLISHED shape, projected from the row —
+  // `apex-reads.mjs § records` names the seven fields no row holds and why
+  // they are absent rather than zero. The mover's class is law, not a row, so
+  // it is read from the same `law_projection` rows the affordances were.
+  const ground = apex.groundMarkIdsOf({
+    marks: world.marks, skeleton, regionSlugs: eng.regions.REGION_SLUGS,
+    polygonOf: eng.geometry.polygonOf, waterFeatures: eng.water.waterFeatures, seaFeature: eng.water.seaFeature,
+  });
+  const records = apex.recordsBlock({
+    marks: world.marks, ids: [...spine.map((m) => m.id), ...nearby.map((o) => o.id)], extra: ground,
+  });
+  if (!records[STRIDE_MARK_ID]) {
+    const stride = apex.classRecordOf(lawRows.find((r) => r.kind === "class" && r.data?.id === STRIDE_MARK_ID));
+    if (stride) records[STRIDE_MARK_ID] = stride;
+  }
+
   return { body: {
     standpoint: { x: near.x, y: near.y, stance: "nobody" },
     crossing: { n, derivation: CROSSING_DERIVATION },
@@ -1111,6 +1148,9 @@ export async function world2Apex(searchParams, { p: injected = null } = {}) {
     note: null,
     within: spine,
     nearby,
+    // Every id `within` and `nearby` name, plus the town's ground set and the
+    // mover's class — the one small whole a painting needs for its floor.
+    records,
     ...(departures ? { departures } : {}),
     ...(present ? { present } : {}),
     actions: law.actions,
