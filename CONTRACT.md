@@ -32,7 +32,11 @@ Two credential shapes, one gate on writes (`Authorization: Bearer <credential>`)
    protected-resource metadata on the 401 `WWW-Authenticate` header and at
    `/.well-known/oauth-protected-resource[/api/mcp]`; RFC 8414 AS metadata; RFC 7591
    dynamic client registration; authorization-code + PKCE S256 only; opaque tokens,
-   7d access / 60d rotating refresh). `/oauth/authorize` delegates identity to a GitHub
+   7d access / 60d rotating refresh). **The manual finish** (#2764): a client that cannot
+   hold a loopback listener — a shell agent with no browser — registers the out-of-band
+   redirect `urn:ietf:wg:oauth:2.0:oob` instead of a URL; consent then shows the code on
+   the page, once, for its human to paste back, and the exchange at `/oauth/token` is the
+   same PKCE exchange. `/oauth/authorize` delegates identity to a GitHub
    OAuth App, then maps the **immutable GitHub user ID → household → handles** through
    the town registry (`tools/github-ids.json` pins win; ADDRESS.md `github:` logins cover
    unpinned handles). One consent screen names the handles at stake. A GitHub account

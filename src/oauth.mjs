@@ -37,6 +37,15 @@ const ACCESS_TTL_S = 30 * 24 * 3600;  // 30d (Keemin's word, 2026-08-12 — the 
 const REFRESH_TTL_S = 60 * 24 * 3600; // 60d
 const CODE_TTL_S = 120;
 const PENDING_TTL_S = 600;
+// THE MANUAL FINISH (#2764 friction 3). A shell agent with no browser and no
+// loopback listener can run discovery, registration and the PKCE authorize
+// from a bare shell — and then the consent's last redirect goes to a
+// 127.0.0.1 port nobody is holding open. A client that registers this
+// out-of-band redirect instead is told, at consent, the code ON THE PAGE, once,
+// for its human to paste back; the exchange at /oauth/token is the same PKCE
+// exchange as every other client's. Nothing about how a token is issued, how
+// long it lives, or the PKCE floor moves: only where the code is shown.
+const OOB_REDIRECT = "urn:ietf:wg:oauth:2.0:oob";
 
 const now = () => Math.floor(Date.now() / 1000);
 const rand = (n = 32) => randomBytes(n).toString("base64url");
@@ -622,8 +631,8 @@ async function handleOauthRoute(req, res, ctx) {
     const body = parseForm(await readBody(req), req.headers["content-type"]);
     const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris.filter((u) => typeof u === "string") : [];
     if (!redirectUris.length) return oerr(res, 400, "invalid_client_metadata", "redirect_uris (array) is required");
-    if (redirectUris.some((u) => !/^https:\/\//.test(u) && !/^http:\/\/(localhost|127\.0\.0\.1)/.test(u)))
-      return oerr(res, 400, "invalid_client_metadata", "redirect_uris must be https (or localhost for dev)");
+    if (redirectUris.some((u) => u !== OOB_REDIRECT && !/^https:\/\//.test(u) && !/^http:\/\/(localhost|127\.0\.0\.1)/.test(u)))
+      return oerr(res, 400, "invalid_client_metadata", `redirect_uris must be https (or localhost for dev), or the out-of-band ${OOB_REDIRECT} for a client with no listener`);
     const client = {
       client_id: rand(16),
       client_name: String(body.client_name ?? "an MCP client").slice(0, 100),
@@ -965,8 +974,13 @@ async function handleOauthRoute(req, res, ctx) {
       }
     }
 
-    const back = new URL(pending.redirect_uri);
+    const manual = pending.redirect_uri === OOB_REDIRECT;
+    const back = manual ? null : new URL(pending.redirect_uri);
     if (body.decision !== "approve") {
+      if (manual)
+        return html(res, 200, page("Not authorized", `
+          <p>Nothing was authorized and there is no code to pass on. <strong>${pending.client_name}</strong>
+          can ask again whenever you are ready.</p>`));
       back.searchParams.set("error", "access_denied");
       if (pending.state) back.searchParams.set("state", pending.state);
       res.writeHead(302, { location: back.toString() });
@@ -977,6 +991,17 @@ async function handleOauthRoute(req, res, ctx) {
       client_id: pending.client_id, redirect_uri: pending.redirect_uri,
       code_challenge: pending.code_challenge, gh_id: pending.gh_id, gh_login: pending.gh_login,
     }), now() + CODE_TTL_S);
+    // The manual finish: the same code, minted the same way, SHOWN instead of
+    // sent. The pending row is already deleted above, so this page cannot be
+    // produced twice — reload the form and the office answers "Expired".
+    if (manual)
+      return html(res, 200, page("Give this code to your agent", `
+        <p>You authorized <strong>${pending.client_name}</strong> as <strong>@${pending.gh_login}</strong>.
+        It has no browser to catch the code, so here it is — copy it and paste it back to them:</p>
+        <p><code data-authorization-code style="font-size:1.25em;user-select:all">${code}</code></p>
+        <p class="muted">Shown once, good for ${Math.round(CODE_TTL_S / 60)} minutes, and useless to anyone who
+        does not also hold the secret your agent generated before asking you. If it lapses, they can ask
+        again — nothing was lost.</p>`));
     back.searchParams.set("code", code);
     if (pending.state) back.searchParams.set("state", pending.state);
     res.writeHead(302, { location: back.toString() });
