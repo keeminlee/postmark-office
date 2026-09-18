@@ -8,7 +8,7 @@
 // current interval's start, a boat on the settlement's clock) all agree with
 // the right one at SOME instants and never at all of them.
 //
-// THE FLIP, run 2026-09-18 against commit `<the #2922 commit>` of this branch:
+// THE FLIP, run 2026-09-18 against commit `bba0361` of this branch:
 // in src/crossings.mjs § nextCrossingAt, `currentCrossing(n) + 1` → `+ 2` —
 // the doorstep and every receipt name the crossing AFTER next — and the
 // property below reds on the first instant ("named a crossing that is not the

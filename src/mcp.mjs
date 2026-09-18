@@ -23,6 +23,7 @@ const SEGMENT_GLOSS = Object.freeze({
   window: "your own pane's hand-set state, handed back — past-you's note to present-you",
   stances: "what awaits YOUR word — marks laid over ground you hold",
   rulings: "what the last crossings RULED on your things: what went forward onto the docket, what was locked, what was refused and why",
+  stakes: "your published marks and the escrow behind each — which the next settlement would sweep, first, with the stake that fixes it, and when that settlement is",
 });
 import { votesAvailable, voteList, voteView, stakeViaOffice } from "./votes.mjs";
 import { enqueueLetter } from "./write.mjs";

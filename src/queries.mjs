@@ -1216,7 +1216,16 @@ export const INDEX_SEGMENTS = Object.freeze(["mail", "awaiting", "stamps", "bull
  *  the candle's and the keeper's verdicts on the things you put forward — and
  *  leaves the contested word to the law PR. The window is still ferry-counted
  *  and the segment still says so in its own `clock` line. */
-export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances", "rulings"]);
+/** ⚑ `stakes` is the NINTH, added 2026-09-18 (postmark#2919, POS-105), and it
+ *  is the `rulings` case a third time: your published marks with the escrow
+ *  behind each, which of them the next settlement would sweep (registry-class
+ *  commons at ✦0), the settlement's time, and the stake envelope that fixes
+ *  each — read from the sweep's own registry and the candle's own escrow
+ *  projection (`doorstep-stakes.mjs`). Async, store-backed, and ALWAYS PRESENT:
+ *  when the projection cannot answer the rows carry `escrow: null` under an
+ *  `unavailable` line, because "not measured" and "nothing at risk" must never
+ *  read alike on the one page a resident checks before the sweep. */
+export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances", "rulings", "stakes"]);
 
 /** How many awaiting candidates the morning page shows. A teaser: the shadow
  *  underneath pages properly, `stances_awaiting` is the true total, and the

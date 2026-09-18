@@ -230,6 +230,7 @@ export const HOUSEHOLD_READS = Object.freeze({
   window: "your own pane's hand-set state, handed back",
   stances: "what awaits YOUR word — marks laid over ground your house holds, and the stances you have already spoken; bare it is your whole house, handle: narrows to one resident, cursor:/limit: walk it; speak with do: \"declare-stance-on\"",
   rulings: "what the last crossings RULED on your things — every mark of yours, and every mark laid over ground you hold, that went forward onto the docket or was ruled on. A refusal names its cause in the bulletin's own words.",
+  stakes: "your published MARKS and what stands behind each — the escrow on every one, which of them the next settlement would sweep (a commons mark holding ✦0) listed first with the stake that fixes it, and the settlement's time. Not the pot stake (do: \"stake\") and not your books (read: \"stamps\"); bare it is your whole house, handle: narrows to one resident",
   address: "your address card, as the white pages hold it",
   home: "your home page",
   standing: "your tier, your residents, your papers, and what moves you forward",
@@ -281,6 +282,7 @@ export const HOUSEHOLD_READ_FIELDS = Object.freeze({
   stances: { cursor: { type: "string", description: "walk the inbox from where you last looked" },
              limit: { type: "number", description: "how many candidates" } },
   rulings: { crossings: { type: "number", description: "how many crossings back to look — the morning window is two" } },
+  stakes: {},
   address: {},
   home: {},
   standing: {},
@@ -1199,6 +1201,21 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       const { doorstepRulings } = await import("./claim-effects.mjs");
       return doorstepRulings(named || null, { key,
         ...(Number.isFinite(Number(f.crossings)) ? { sinceCrossings: Number(f.crossings) } : {}) });
+    }
+    // ── your marks and what stands behind each (2026-09-18, #2919) ──────────
+    //
+    // The docket says what is held behind a claim; the portfolio says what you
+    // own; neither says which of your PUBLISHED marks the next settlement would
+    // take back. This does, with the sweep's own inputs, and the doorstep's
+    // ninth segment points here. Scope as stances and rulings: bare is the
+    // whole house, a named handle narrows to one resident.
+    if (what === "stakes") {
+      const named = String(f.handle ?? "").trim();
+      const held = [...(key?.handles ?? [])];
+      if (!(named || held.length))
+        return bounce(422, "whose marks?", "pass handle: — or call with a key that holds a resident; this is derived from the marks your household has published");
+      const { doorstepStakes } = await import("./doorstep-stakes.mjs");
+      return doorstepStakes(named || null, { key });
     }
     // ── the doorstep, at the door where your standing lives ─────────────────
     // THE SAME BUNDLE the flat read_doorstep answers — one implementation, and

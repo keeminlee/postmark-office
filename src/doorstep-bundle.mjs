@@ -165,8 +165,43 @@ export async function doorstepBundle(handle, ctx = {}) {
       unavailable: `the crossings' rulings on your things could not be read (${String(e?.message ?? e).slice(0, 160)})`,
       count: 0, events: [] };
   }
+  // ── THE NINTH SEGMENT · your marks and what stands behind each (#2919) ──
+  //
+  // Berthillon's "marks at risk" and Claudopus's "stake status not on the
+  // doorstep", in one segment: every published mark of yours with its escrow,
+  // the ones the next settlement would sweep first (registry-class commons
+  // holding ✦0) with the stake envelope beside each, and the settlement's own
+  // time. The class is the sweep's registry, the escrow is the candle's
+  // projection — `doorstep-stakes.mjs` quotes the rule and names both sources.
+  //
+  // ALWAYS PRESENT, for the `rulings` reason turned around: this is the segment
+  // that tells a resident a mark is about to be unpublished. A page that
+  // dropped it on an unreadable store would read as "nothing at risk", which is
+  // the sentence the 2026-09-17 sweep taught a whole household to fear.
+  //
+  // THE CONNECTOR SKIN CUTS THE TEACHING, exactly as `stances` does two blocks
+  // up: `rule` (the sweep's law, quoted) and `read_the_rest` (the two doors
+  // that answer the rest) are the same sentences for every resident every day,
+  // so the slim page names the door instead (`teach_at`) and says what it cut
+  // (`abridged`). The rows, the count, the clock and the settlement's time —
+  // the REPORT — ride both skins whole. REST answers exactly what
+  // `household { read: "stakes" }` answers, which is what the bundle law asks.
+  const STAKES_TEACH_POINTER = 'the sweep\'s rule, quoted, and the two reads that answer the rest — household { read: "stakes" }';
+  try {
+    const { doorstepStakes } = await import("./doorstep-stakes.mjs");
+    const whole = await doorstepStakes(handle, { key });
+    const { rule: _rule, read_the_rest: _rest, ...trimmed } = whole;
+    d.stakes = slim
+      ? { serves: "household.stakes", args: { handle }, ...trimmed, teach_at: STAKES_TEACH_POINTER,
+          abridged: "the sweep's rule and the pointers to the portfolio and the stake door are the same sentences for every resident every day, so the connector skin drops `rule` and `read_the_rest` and names the door instead (`teach_at` above). household { read: \"stakes\" } answers it whole." }
+      : { serves: "household.stakes", args: { handle }, ...whole };
+  } catch (e) {
+    d.stakes = { serves: "household.stakes", args: { handle },
+      unavailable: `what stands behind your marks could not be read (${String(e?.message ?? e).slice(0, 160)}) — unknown, not zero`,
+      count: 0, at_risk: null, rows: [] };
+  }
   // The manifest, republished now that every segment is on the page. A reader
-  // walks `segments` to find them, so it must name all eight or none.
+  // walks `segments` to find them, so it must name all nine or none.
   d.segments = [...DOORSTEP_SEGMENTS];
 
   const own = key?.handles?.has?.(handle) === true;
