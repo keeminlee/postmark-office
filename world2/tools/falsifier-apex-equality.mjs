@@ -156,8 +156,8 @@ const pool = new pg.Pool({ connectionString: process.env.WORLD2_PG_URL, max: 3 }
 // them, and so a reader can see the whole list without reading the comparator.
 // Each names the 1.0 line that produces it — the report's own requirement.
 const ACKNOWLEDGED = Object.freeze([
-  { id: "AD-1", field: "nearby[].members / nearby[].members[] / nearby[].order / nearby[].order[]",
-    because: "world-engine.mjs § lodScore: `const stamp = 1 + dials.weight_lod_k * Math.log1p(Math.max(0, weight))` — the FOV ranks by angular size MODULATED BY STAMPS, and 2.0's stamp_projection holds per-handle balances, not per-mark escrow. The port emits weight: 0 on every mark (apex-reads.mjs § markRecordOf), so ranking is unweighted and the budget cap can admit a different tail.",
+  { id: "AD-1", field: "nearby[].members / nearby[].members[] / nearby[].order / nearby[].order[] / records.ids / records.ids[]",
+    because: "world-engine.mjs § lodScore: `const stamp = 1 + dials.weight_lod_k * Math.log1p(Math.max(0, weight))` — the FOV ranks by angular size MODULATED BY STAMPS, and 2.0's stamp_projection holds per-handle balances, not per-mark escrow. The port emits weight: 0 on every mark (apex-reads.mjs § markRecordOf), so ranking is unweighted and the budget cap can admit a different tail. `records` is keyed by exactly the ids `nearby` names (plus the ground and the mover's class, which both sides select identically), so its id set carries the same tail — measured 2026-09-17 on prod: every id in one block and not the other was in that side's own `nearby`, at all fourteen standpoints.",
     closes_with: "parity P-006's escrow view over stamp_projection (RULED, unbuilt) — then weight is a query and this row dies." },
   { id: "AD-2", field: "present.residents[].standing / present.residents[].aboard",
     because: "live-reads.mjs § What is NOT here: the FRAME half is refused. dynamic-presence.mjs's readPresence composes `standing` and `aboard` from positions.mjs § withFrames, which needs the vessel's frame fold. The port omits both rather than emitting false.",
