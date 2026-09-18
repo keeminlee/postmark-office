@@ -24,6 +24,7 @@ process.env.MEDIA_QUOTA_BYTES = String(4 * 1024 * 1024);
 
 const { uploadMedia, mintThumbnails, THUMB_VARIANTS, THUMB_SIZES, THUMB_FORMATS, thumbObjectKey, thumbUrlFor, mediaUrlOk, MEDIA_BASE }
   = await import("../src/media.mjs");
+const { RASTER_FORMATS } = await import("../src/edit.mjs");
 
 const key = (over = {}) => ({ household: "testers", handles: new Set(["tester"]), ...over });
 const odb = () => new DatabaseSync(":memory:");
@@ -46,6 +47,7 @@ test("the table: two sizes, the card one the home card's own shape, rasters only
   assert.deepEqual(THUMB_VARIANTS[96], { w: 96, h: 96 }, "the face is a square");
   assert.deepEqual(THUMB_VARIANTS[256], { w: 256, h: 286 }, "the card is 52:58 — HOME_CARD in the viewer, 52 by 44+14");
   assert.deepEqual([...THUMB_FORMATS], ["jpg", "png", "webp"]);
+  assert.deepEqual([...THUMB_FORMATS], [...RASTER_FORMATS], "the copy formats ARE the door's rasters — spelled twice because of the edit↔media cycle, held equal here");
   assert.equal(thumbObjectKey("testers", "abc", "jpg", 96), "media/testers/abc-96.jpg");
   assert.ok(mediaUrlOk(thumbUrlFor("testers", "abc", "png", 256)), "a copy's url passes the mark door's allowlist, like the original's");
 });

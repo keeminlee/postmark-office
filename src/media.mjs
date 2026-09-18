@@ -57,7 +57,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve as resolvePath, sep } from "node:path";
-import { decodeImage, imageFormat, MAX_IMAGE, MEDIA_FORMATS, MEDIA_TYPE_BY_EXT, RASTER_FORMATS } from "./edit.mjs";
+import { decodeImage, imageFormat, MAX_IMAGE, MEDIA_FORMATS, MEDIA_TYPE_BY_EXT } from "./edit.mjs";
 
 const bounce = (code, defect, hint) => Object.assign(new Error(defect), { code, defect, hint });
 
@@ -141,8 +141,13 @@ export const THUMB_VARIANTS = Object.freeze({
 });
 export const THUMB_SIZES = Object.freeze(Object.keys(THUMB_VARIANTS).map(Number));
 /** The formats a copy is minted for — the rasters. `svg` is a MEDIA_FORMAT and
- *  deliberately not here. */
-export const THUMB_FORMATS = RASTER_FORMATS;
+ *  deliberately not here. SPELLED HERE, not aliased from edit.mjs's
+ *  RASTER_FORMATS: edit.mjs imports this file too, and when the server enters
+ *  the cycle through edit.mjs that binding is still uninitialised while this
+ *  module evaluates — an alias at load time threw at the office's front door
+ *  (every server-spawning suite red, 2026-09-18) where the direct importers
+ *  never saw it. test/media-thumbnails.test.mjs holds the two lists equal. */
+export const THUMB_FORMATS = Object.freeze(["jpg", "png", "webp"]);
 export const THUMB_QUALITY = 84; // the site's own dial (postmark-site tools/lib/images.mjs)
 export const thumbObjectKey = (household, sha, ext, size) => `media/${household}/${sha}-${size}.${ext}`;
 export const thumbUrlFor = (household, sha, ext, size) => `${MEDIA_BASE}/${thumbObjectKey(household, sha, ext, size)}`;
