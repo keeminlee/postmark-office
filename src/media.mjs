@@ -28,7 +28,10 @@
 // office carries no SDK for one verb. Keys are content-addressed
 // (media/<household>/<sha256>.<ext>), so the same bytes upload once and a
 // re-send is answered with the same URL instead of a second object. Nothing
-// here deletes: media is append-only in v1, and the quota is the wall.
+// here deletes: media is append-only in v1, and the quota is the wall. Beside
+// each raster original the door puts two small copies at derivable names
+// (`-96`, `-256` — § the small copies, below); they are the town's, not the
+// household's, and the wall does not see them.
 //
 // The quota grain is the HOUSEHOLD — the credential grain, same as the
 // anti-sybil floor — sized per resident it holds (20 MB each by default), so
@@ -102,6 +105,106 @@ export const mediaObjectKey = (household, sha, ext) => `media/${household}/${sha
 /** The permanent URL those bytes answer at. Passes mediaUrlOk by construction —
  *  test/household-media.test.mjs holds that to account rather than assuming it. */
 export const mediaUrlFor = (household, sha, ext) => `${MEDIA_BASE}/${mediaObjectKey(household, sha, ext)}`;
+
+// ── THE SMALL COPIES BESIDE THE ORIGINAL (postmark#2940, Keemin 2026-09-18) ──
+//
+// "Isn't the rasterization just generally a good practice from a common sense
+// standpoint considering images are rendered really small the majority of the
+// time?" Yes. The map draws a home card at ~120 px and a face at ~50 px from
+// whatever the resident uploaded — median 1.1 megapixels, 363 MB decoded for
+// the town's 83 raster home pictures if every one is in view — so the door
+// mints two small copies at upload and puts them beside the original, at names
+// the viewer can DERIVE from the original's url without asking anyone:
+//
+//   media/<household>/<sha>-96.<ext>    a 96×96 square, centre-cropped the way
+//                                       walkerFrameSVG's circle clips a face
+//   media/<household>/<sha>-256.<ext>   256×286, the home card's own shape —
+//                                       HOME_CARD in spectator/viewer.mjs is
+//                                       52 wide by 44+14 tall, and the card
+//                                       hangs its picture `xMidYMid slice`
+//
+// The mipmap every VTT mints. Same format as the original (a jpg stays a jpg),
+// EXIF-oriented the way a browser shows the original, camera metadata not
+// carried. THE ORIGINAL IS UNTOUCHED — same bytes, same name, same url; the
+// copies are the TOWN'S derivative, not the household's upload, so they are
+// never a ledger row and never count against the wall (the-byte-accounting:
+// the quota is byte-accounting of what a household PUT, and nobody put these).
+// An SVG mints none: a vector is already every size. A copy the door could
+// not mint (a decoder the box lacks, a file libvips will not read) is logged
+// and skipped — the viewer falls back to the original when a copy is not
+// there — and NEVER refuses the upload: the resident's picture is the act, the
+// copies are housekeeping. Existing originals get theirs from
+// tools/media-thumbnails-backfill.mjs, by the operator's hand.
+export const THUMB_VARIANTS = Object.freeze({
+  96: Object.freeze({ w: 96, h: 96 }),
+  256: Object.freeze({ w: 256, h: 286 }),
+});
+export const THUMB_SIZES = Object.freeze(Object.keys(THUMB_VARIANTS).map(Number));
+/** The formats a copy is minted for — the rasters. `svg` is a MEDIA_FORMAT and
+ *  deliberately not here. SPELLED HERE, not aliased from edit.mjs's
+ *  RASTER_FORMATS: edit.mjs imports this file too, and when the server enters
+ *  the cycle through edit.mjs that binding is still uninitialised while this
+ *  module evaluates — an alias at load time threw at the office's front door
+ *  (every server-spawning suite red, 2026-09-18) where the direct importers
+ *  never saw it. test/media-thumbnails.test.mjs holds the two lists equal. */
+export const THUMB_FORMATS = Object.freeze(["jpg", "png", "webp"]);
+export const THUMB_QUALITY = 84; // the site's own dial (postmark-site tools/lib/images.mjs)
+export const thumbObjectKey = (household, sha, ext, size) => `media/${household}/${sha}-${size}.${ext}`;
+export const thumbUrlFor = (household, sha, ext, size) => `${MEDIA_BASE}/${thumbObjectKey(household, sha, ext, size)}`;
+
+// sharp is loaded on first use, not at module load: it is a native dependency
+// (libvips), and the office's front door must open even on a box whose binary
+// failed to land — the upload takes the original and logs that no copy was cut.
+let sharpModule = null;
+const loadSharp = () => (sharpModule ??= import("sharp").then((m) => m.default));
+
+/**
+ * Cut the small copies from one original. Pure over its inputs: bytes in,
+ * `[{ size, bytes, width, height, mediaType }]` out, one per THUMB_SIZES, in
+ * that order. Throws for a format no copy is cut for and for bytes libvips
+ * cannot read — the callers decide whether that is fatal (the door: no; the
+ * backfill: name it and move on).
+ *
+ * `fit: cover` + `position: centre` is the `xMidYMid slice` the viewer draws
+ * with, so the copy shows exactly the region the original shows in the frame.
+ * `withoutEnlargement` keeps a picture already smaller than the copy at its
+ * own size — a 40 px face cut to 96 would be a bigger file with no more
+ * picture in it. An animated WebP contributes its first frame.
+ */
+export async function mintThumbnails(bytes, ext, { sizes = THUMB_SIZES } = {}) {
+  if (!THUMB_FORMATS.includes(ext))
+    throw bounce(422, `no small copies are cut for .${ext}`, `copies are minted for ${THUMB_FORMATS.join(", ")}`);
+  const sharp = await loadSharp();
+  const mediaType = MEDIA_TYPE_BY_EXT[ext];
+  const source = sharp(bytes).rotate();
+  const out = [];
+  for (const size of sizes) {
+    const shape = THUMB_VARIANTS[size];
+    if (!shape) throw bounce(422, `no such copy size: ${size}`, `the sizes are ${THUMB_SIZES.join(", ")}`);
+    let img = source.clone().resize(shape.w, shape.h, { fit: "cover", position: "centre", withoutEnlargement: true });
+    if (ext === "jpg") img = img.jpeg({ quality: THUMB_QUALITY });
+    else if (ext === "webp") img = img.webp({ quality: THUMB_QUALITY });
+    else img = img.png();
+    const { data, info } = await img.toBuffer({ resolveWithObject: true });
+    out.push({ size, bytes: data, width: info.width, height: info.height, mediaType });
+  }
+  return out;
+}
+
+/**
+ * Mint the copies for an original that is already behind the door and put each
+ * through the SAME signed PUT the original took. Answers `{ [size]: url }` for
+ * what was put. `put` is the door's own r2Put unless a test hands in a stub.
+ */
+export async function putThumbnails({ household, sha, ext, bytes, sizes = THUMB_SIZES, put = r2Put }) {
+  const copies = await mintThumbnails(bytes, ext, { sizes });
+  const urls = {};
+  for (const c of copies) {
+    await put(thumbObjectKey(household, sha, ext, c.size), c.bytes, c.mediaType);
+    urls[c.size] = thumbUrlFor(household, sha, ext, c.size);
+  }
+  return urls;
+}
 
 /**
  * The wall, measured. `residents` is the count of residents the CALLING KEY
@@ -598,6 +701,20 @@ export async function uploadMedia(args = {}, key = null, odb = null,
       `${fmtMB(used)} of ${fmtMB(ceiling)} used and this file is ${fmtMB(bytes.length)} — the wall is ${fmtMB(QUOTA_PER_RESIDENT)} per resident; the ceiling is a dial, and a genuine need is a letter to the founders`);
 
   await put(objectKey, bytes, mediaType);
+  // THE SMALL COPIES, after the original is in storage and before the ledger
+  // row — the row records the household's bytes only (§ the small copies
+  // above: the copies are the town's and cost no quota). A copy that could
+  // not be cut is a log line and `variants: null`, never a refusal: the upload
+  // has already landed, and the viewer asks for the original when a copy is
+  // not there.
+  let variants = null;
+  if (THUMB_FORMATS.includes(ext)) {
+    try {
+      variants = await putThumbnails({ household, sha, ext, bytes, put });
+    } catch (e) {
+      console.log(`[media] no small copies for ${household} ${sha.slice(0, 12)}.${ext}: ${e?.defect ?? e?.message ?? e}`);
+    }
+  }
   odb.prepare("INSERT INTO media (household, sha, ext, bytes, by_handle, created) VALUES (?, ?, ?, ?, ?, ?)")
     .run(household, sha, ext, bytes.length, by, Date.now());
   // ONE LINE SO A WALL BREACH LEAVES A TRACE. The ledger row is byte-accounting
@@ -606,6 +723,6 @@ export async function uploadMedia(args = {}, key = null, odb = null,
   // This names the source and, for a fetch, the host that actually ANSWERED
   // (the end of the redirect chain, not the URL the resident sent). No key, no
   // credential, no path outside the town: the office's own operator log only.
-  console.log(`[media] ${household}/${by} ${source}${read_at ? ` ${read_at.path}` : ""} ${bytes.length}B ${ext} ${sha.slice(0, 12)}`);
-  return { url, bytes: bytes.length, type: mediaType, sha, via: source, ...(read_at ? { read_at } : {}), quota: { used: used + bytes.length, ceiling } };
+  console.log(`[media] ${household}/${by} ${source}${read_at ? ` ${read_at.path}` : ""} ${bytes.length}B ${ext} ${sha.slice(0, 12)}${variants ? ` +${Object.keys(variants).join("/")}` : ""}`);
+  return { url, bytes: bytes.length, type: mediaType, sha, via: source, ...(read_at ? { read_at } : {}), quota: { used: used + bytes.length, ceiling }, variants };
 }
