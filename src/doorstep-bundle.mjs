@@ -24,6 +24,7 @@ import { doorstep, nextStepsFor, DOORSTEP_SEGMENTS, DOORSTEP_STANCES } from "./q
 import { hotTenseBlock } from "./town-updates.mjs";
 import { hotMailBlock, outboxTense } from "./town-mail.mjs";
 import { votesAvailable, doorstepVotes } from "./votes.mjs";
+import { nextCrossingForDoorstep } from "./crossings.mjs";
 
 /**
  * The finished doorstep for one resident, or null when there is no such
@@ -43,8 +44,26 @@ export async function doorstepBundle(handle, ctx = {}) {
   // before, because a page's shape must not change under a reader who did not
   // ask for it. What the cut drops, queries.mjs § slimAwaiting names on the page.
   const { db, key, meta, asOf, clone, odb, canWrite, conversationsOffset = 0, slim = false } = ctx;
-  const d = doorstep(db, handle, asOf, { conversationsOffset, slim, fresh: { odb, clone, asOf } });
-  if (!d) return null;
+  const core = doorstep(db, handle, asOf, { conversationsOffset, slim, fresh: { odb, clone, asOf } });
+  if (!core) return null;
+
+  // ── THE HEADER'S CLOCK (postmark#2922) ─────────────────────────────────────
+  //
+  // Pica: "show when the next ferry crossing is on the doorstep or send
+  // receipt, so you know if your letter makes this crossing or waits." Right
+  // under `as_of`, on every skin and every door, because it is the one number
+  // a writer reads BEFORE writing: the boat's number, when it sails, how many
+  // minutes off, and the sentence. The receipt names the same boat by the same
+  // number (`crossings.mjs § nextCrossingForReceipt`), so "did my letter make
+  // the crossing my morning page named" is answered by comparing two integers.
+  //
+  // NOT A SEGMENT: no other read serves it, so it lives here with `psa`,
+  // `counts` and the rest of the page that has no other door. It is a live
+  // clock — `minutes_away` moves every minute — which is why it is a header
+  // field and not part of any segment's domain (the bundle law deep-equals
+  // segments against their reads, called an instant apart).
+  const { handle: h, as_of, ...rest } = core;
+  const d = { handle: h, as_of, next_crossing: nextCrossingForDoorstep(), ...rest };
 
   // ── THE SEVENTH SEGMENT · what awaits your word (the founder's .1 ruling) ─
   //
