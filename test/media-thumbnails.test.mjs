@@ -70,6 +70,10 @@ test("an upload puts three objects: the original, -96, -256 — each the right s
   const px = (x, y) => [data[(y * 96 + x) * 3], data[(y * 96 + x) * 3 + 1], data[(y * 96 + x) * 3 + 2]];
   assert.ok(px(48, 48)[0] > 200, `the centre is the white column, got ${px(48, 48)}`);
   assert.ok(px(2, 48)[0] < 60, `the flank is navy, got ${px(2, 48)}`);
+  // …and the column runs the copy's full height: a letterbox (fit: contain)
+  // would put a band here, a cover crop puts the picture
+  assert.ok(px(48, 2)[0] > 200, `the top of the centre is still the column — no band, got ${px(48, 2)}`);
+  assert.ok(px(48, 93)[0] > 200, `and so is the bottom, got ${px(48, 93)}`);
   // the receipt names the copies, and the wall saw the original alone
   assert.deepEqual(r.variants, {
     96: `${MEDIA_BASE}/media/testers/${r.sha}-96.jpg`,
