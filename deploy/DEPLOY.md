@@ -47,8 +47,8 @@ the tag exactly as it always did **and stops**. Today's behaviour, unchanged;
 the hand-carry stays the way code reaches the box.
 
 ```sh
-gh variable set OFFICE_AUTODEPLOY --body on  -R keeminlee/postmark-office   # adopt
-gh variable set OFFICE_AUTODEPLOY --body off -R keeminlee/postmark-office   # back to hand-carry
+gh variable set OFFICE_AUTODEPLOY --body on  -R postmark-town/postmark-office   # adopt
+gh variable set OFFICE_AUTODEPLOY --body off -R postmark-town/postmark-office   # back to hand-carry
 ```
 
 The gate exists because of an awkward, specific fact: **`workflow_dispatch` does
@@ -141,7 +141,7 @@ env), run by hand after the ship.
 ### Repo secrets it needs
 
 `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY` — the same three names the site repo
-already holds. Set them on `keeminlee/postmark-office`. The deploy user must own
+already holds. Set them on `postmark-town/postmark-office`. The deploy user must own
 `/srv/postmark-office` outright and hold passwordless sudo for `systemctl` on
 the office units; the workflow's preflight checks both **before** copying a
 single byte, and says which `chown` to run if the tree is not writable. A
@@ -157,7 +157,7 @@ by `workflow_dispatch` with `target: prod` and that tag's name.
 ```sh
 # 1. code + clones (as the deploy user, e.g. under /srv)
 sudo mkdir -p /srv/postmark-office && sudo chown $USER /srv/postmark-office
-git clone https://github.com/keeminlee/postmark-office.git /srv/postmark-office
+git clone https://github.com/postmark-town/postmark-office.git /srv/postmark-office
 git clone https://github.com/keeminlee/postmark.git /srv/postmark-office/town-clone
 
 # 2. secrets — NEVER in either repo
