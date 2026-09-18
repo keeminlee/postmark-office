@@ -9,11 +9,14 @@
 // (never swept) — because a predicate that reads only the number would flag two
 // of them wrongly and pass a test with one mark in it.
 //
-// THE FLIPS, run 2026-09-18 against commit `<the #2919 commit>` of this branch:
+// THE FLIPS, run 2026-09-18 against commit `fb36916` of this branch:
 //   1. src/doorstep-stakes.mjs § stakesRowsFrom, `cls === "commons" && escrow === 0`
-//      → `escrow === 0`: "a home-class parcel at ✦0 is NOT at risk" and "founding
-//      estate is NOT at risk" red (2 of 12).
-//   2. the `rows.sort(...)` line removed: "the at-risk mark is FIRST" reds (1 of 12).
+//      → `escrow === 0` (the number alone): 5 of 11 red — the four-shape test
+//      ("a home-class parcel at ✦0 is NOT at risk", "founding estate is NOT at
+//      risk"), and every test that pins the order, because two more rows became
+//      at-risk and sorted ahead.
+//   2. the `rows.sort(...)` line removed: 5 of 11 red — "the at-risk mark is
+//      FIRST" and every order pin.
 //
 // The escrow reader is proven the way `docketEscrow` is (test/stake-held.test.mjs):
 // a narrow pool stand-in that answers the two statements and throws on any other,
