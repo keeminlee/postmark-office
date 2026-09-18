@@ -2222,6 +2222,70 @@ untested until the first give, which is the wrong side of the record to discover
 it on. The unit suite (`test/world2-guard-reads.test.mjs`, 17 tests) covers the
 same mapping directly.
 
+### In CI — the run that has no prod (POS-107)
+
+**Ruled (Keemin, 2026-09-17, D-A of `DESIGN-standing-flip.md` § 6): "local
+postgres is fine to CI."** The scratch database this falsifier needs would be
+`CREATE DATABASE` on prod's own server, and that write was refused on 09-17
+(postmark#2892 § 1). So `.github/workflows/guard-falsifier.yml` runs it on every
+pull request (and on dispatch) against a `postgres:16` service that lives for
+one job: the five roles, both databases floored from `world2/schema/` (every
+`NNN_*.sql` in name order as `world2_owner`, 003 skipped — it is a falsifier
+query, not a migration), a shallow read-only checkout of `keeminlee/postmark-world`
+at `main` for `--world-repo`, the run with `--json`. ~2 minutes, most of it
+`npm ci`. The floor loop lives in `.github/scripts/guard-falsifier-floor.sh`
+and the receipt printer in `guard-falsifier-report.mjs`; both are workflow
+machinery, listed by no unit.
+
+**The roles are created nowhere else.** No file in this repo `CREATE ROLE`s
+anything — 002 GRANTs to five names the box made by hand. The workflow's list
+(`world2_owner`, `office_api`, `clearing_job`, `law_ingester`,
+`snapshot_reader`) is derived from 002's grantees and is now the only written
+record of them.
+
+**`world2_dev` is SEEDED, and G5 is the reason.** G1–G4 and G6 write their own
+population and are the same equality on any machine. G5 reads a real store —
+`acts` against 1.0's recovery over the checkout's `STATE/` — and a floored,
+empty `world2_dev` reds it on every holder (measured 2026-09-18: *"1.0's
+recovery yields 109 attachment rows, the port yields 0"*, 38 findings, exit 1).
+So the job runs the genesis pen first, `seed-import.mjs --with-acts` at the
+checkout's own sha (the pen that wrote prod's `legacy:attachment` rows on
+2026-08-28; ~3 s at main). G5's verdict in CI is therefore **the port's
+legacy-era parse of the seed's rows against 1.0's recovery over the same
+STATE** — a real equality, and not a verdict about prod's `acts`. That one
+still needs prod's store; box 1 of #2892 records what CI can and cannot say.
+
+**Exit 2 cannot read green.** Every non-zero exit fails its step, and the step
+after the run reads the receipt a second time: `unchecked` must be empty and
+every equality must have compared something.
+
+**The workflow proves it can go red — twice, on purpose.** Two steps are
+expected to FAIL (`continue-on-error`) and the step after each asserts that
+they did, and how:
+
+- a `claims` row planted in the scratch store that 1.0's journal never wrote
+  (`guards-alfa/the-planted-shed`) → exit **1**, and the slug must appear in the
+  log (G1 and G4 name it);
+- `--world-repo` with no `STATE/` → exit **2**, and the step must fail on it.
+
+An exit 2 in the first proof would not satisfy it: a run that could not run is
+not a run that found the divergence, so the code is captured and asserted, not
+just the outcome.
+
+**`--prove-can-fail` is the tool's proof, not the workflow's, and it is GREEN
+when it holds.** It breaks the port in memory seven ways and exits 0 when every
+break is noticed, 1 only when one goes silent. The job runs it as its own step
+on a fresh scratch and asserts every break read RED — none SILENT, INERT or
+THREW. Each run after the first gets a fresh scratch (`--fresh`): the falsifier
+plants its population through the live pen, and a rerun over the first run's
+rows reads green today but would be measuring leftovers.
+
+**What CI does not do.** Nothing reaches prod or the box; the only token is the
+default `GITHUB_TOKEN`, used to read a public repo. 003 is not run as a gate: on
+any fresh floor it prints 014's two `escrow_projection` rows, the same red prod
+carries (Wright's, named on #2897). The rest of the office suite is not in CI
+(a separate decision; the office still has no suite workflow).
+
 ### What the falsifier found
 
 **1 · `acts.household` and `claims.household` spell one fact two ways.**
