@@ -48,7 +48,7 @@ import * as talk from "../world2/tools/conversations.mjs";
 import * as apex from "../world2/tools/apex-reads.mjs";
 // The CANDLE'S OWN escrow reader, not a second one — § THE DOCKET ROW says why.
 import { escrowPresenceAt } from "../world2/tools/escrow-presence.mjs";
-import { freshestMainRef, materializeAtRef } from "./world-branches.mjs";
+import { blessedRef, materializeAtRef } from "./world-branches.mjs";
 import { WORLD_CLONE, placeWordsFrom } from "./world.mjs";
 import { CROSSING_DERIVATION, currentCrossing } from "./crossings.mjs";
 import { actorRoster } from "./human-actor.mjs";
@@ -96,7 +96,7 @@ async function pool(env = process.env) {
 let _engine = null;
 async function engine() {
   if (_engine) return _engine;
-  const dir = materializeAtRef(WORLD_CLONE, freshestMainRef(WORLD_CLONE), "tools");
+  const dir = materializeAtRef(WORLD_CLONE, blessedRef(WORLD_CLONE), "tools"); // the blessed engine, as world.mjs engineDir (postmark#2934)
   const at = (f) => import(pathToFileURL(join(dir, "tools", f)).href);
   const [verbs, build, engineMod] = await Promise.all([
     at("world-verbs.mjs"), at("world-build.mjs"), at("world-engine.mjs")]);
