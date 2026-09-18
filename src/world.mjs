@@ -41,7 +41,7 @@ import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a
 import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendActFlipped, appendJournal, filedPathOfAt, laneFlipped, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { guardedDraftsForKey, guardedLiveChildrenOf, guardedLiveMarks } from "./world2-guards.mjs"; // B1: the door guards' own reads, behind W2_GUARDS (runbook §4 B1)
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
-import { classNames, classRoster, classDials, departurePace, freeCellIn, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
+import { classNames, classRoster, classDials, departurePace, freeCellIn, RESIDENT_INSTANTIABLE, residentMayInstantiate, STRIDE_MARK_ID } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf, humanHandFor } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
@@ -1291,7 +1291,16 @@ export async function markRecords(ids = [], w = null) {
   let byId = _byIds.get(w);
   if (!byId) _byIds.set(w, byId = new Map((w?.marks ?? []).map((m) => [m.id, m])));
   const out = {};
-  for (const id of [...ids, ...(await groundMarkIds(w))]) {
+  // THE MOVER'S OWN CLASS RIDES EVERY READ (2026-09-13, Keemin: "people are getting
+  // confused by the fallback '?' walking ETA"). The viewer prices a walk preview
+  // by `the-town/resident`'s `dials.pace_km_per_crossing` (60, ruled by 008b) —
+  // `departPaceKm(byId)` — and on the resident path `byId` is THIS map. A class
+  // mark has no place, so it was never nearby and never on the spine, the dial
+  // was never in hand, and every signed-in reader's desk fell back to the legacy
+  // 15 km stride: a "?" chip and an ETA four times too long. Spectators, whose
+  // map is the fold, never saw it. The class every reader IS travels with them,
+  // the way the town's ground does.
+  for (const id of [...ids, ...(await groundMarkIds(w)), STRIDE_MARK_ID]) {
     if (id == null || out[id]) continue;
     const mark = byId.get(id);
     if (mark) out[id] = mark;

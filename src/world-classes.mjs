@@ -540,6 +540,8 @@ export function freeCellIn(placeId, seed, { worldDb = null } = {}) {
 // lives HERE, once, beside the reader, so the next rename fails a test
 // instead of slowing the town.
 export const STRIDE_CLASS_NAME = "resident";
+/** the stride class AS A MARK ID — the record every reader's walk preview prices its legs by (2026-09-13) */
+export const STRIDE_MARK_ID = `the-town/${STRIDE_CLASS_NAME}`;
 export function departurePace({ worldDb = null } = {}) {
   const d = Number(classDials(STRIDE_CLASS_NAME, { worldDb })?.pace_km_per_crossing);
   return Number.isFinite(d) && d > 0 && d <= 1000 ? d : null;

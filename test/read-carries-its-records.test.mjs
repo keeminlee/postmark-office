@@ -27,6 +27,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { WORLD_CLONE, markRecords, worldEyes } from "../src/world.mjs";
+import { STRIDE_MARK_ID } from "../src/world-classes.mjs";
 
 const HAVE_WORLD = existsSync(join(WORLD_CLONE, "tools", "region-outsiders.mjs"))
   && existsSync(join(WORLD_CLONE, "WORLD", "world-state.json"));
@@ -99,13 +100,13 @@ test("FALSIFIER 2 — and NOTHING ELSE: every record is named or is ground", asy
     const read = await worldEyes(at);
     const named = new Set(read.objects.map((o) => o.id));
     for (const id of Object.keys(read.records)) {
-      assert.ok(named.has(id) || ground.ids.has(id),
+      assert.ok(named.has(id) || ground.ids.has(id) || id === STRIDE_MARK_ID,
         `${where}: \`records\` carries ${id}, which this read never named and which is not the town's ground `
-        + `— the fold is coming back through the door`);
+        + `and is not the mover's own class — the fold is coming back through the door`);
     }
     // and the two sets together are the WHOLE of it: no third source
     assert.equal(Object.keys(read.records).length,
-      new Set([...named, ...ground.ids]).size,
+      new Set([...named, ...ground.ids, STRIDE_MARK_ID]).size,
       `${where}: the record count does not equal |named ∪ ground|`);
   }
 });
@@ -114,6 +115,8 @@ test("FALSIFIER 3 — the ground set is there, whole, and is not the fold", asyn
   if (!HAVE_WORLD) return t.skip(NO_WORLD);
   const ground = await groundFromTheRecord();
   const bare = await markRecords([]);          // no ids named at all: the ground alone
+  // …plus the mover's own class (2026-09-13, falsifier 5): it rides every read and is not ground
+  delete bare[STRIDE_MARK_ID];
   const ids = new Set(Object.keys(bare));
   assert.deepEqual([...ids].sort(), [...ground.ids].sort(),
     "the ground the door carries is not the ground the record describes");
@@ -142,5 +145,24 @@ test("FALSIFIER 4 — a read with the ground set gone is DETECTABLY gone", async
   assert.ok(Object.keys(read.records).length > namedOnly.length,
     "the ground contributes nothing to this read — falsifier 3 could not tell a missing floor from a present one");
   assert.equal(Object.keys(read.records).length,
-    new Set([...namedOnly, ...ground.ids]).size);
+    new Set([...namedOnly, ...ground.ids, STRIDE_MARK_ID]).size);
+});
+
+test("FALSIFIER 5 — the mover's own class rides every read, with its stride (2026-09-13)", async (t) => {
+  // Keemin: "people are getting confused by the fallback '?' walking ETA". The
+  // viewer prices a walk preview by the stride class's dial and, on the resident
+  // path, looks it up in THIS read's records. A class mark has no place, so
+  // neither the spine nor the nearby set ever named it, and every signed-in
+  // reader's desk priced legs at the legacy 15 km and wore a "?". The class a
+  // reader IS travels with them, the way the town's ground does.
+  if (!HAVE_WORLD) return t.skip(NO_WORLD);
+  for (const [where, at] of STANDPOINTS) {
+    const read = await worldEyes(at);
+    const stride = read.records[STRIDE_MARK_ID];
+    assert.ok(stride, `${where}: \`records\` does not carry ${STRIDE_MARK_ID}`);
+    const pace = Number(stride?.dials?.pace_km_per_crossing);
+    assert.ok(Number.isFinite(pace) && pace > 0, `${where}: the stride mark carries no pace dial (${pace})`);
+  }
+  // ⚑ THE FLIP: drop STRIDE_MARK_ID from markRecords' appended list → the first
+  //   assertion reds on every standpoint; FALSIFIER 2 stays green either way.
 });
