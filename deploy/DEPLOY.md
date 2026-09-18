@@ -747,7 +747,13 @@ not fail the notary**: the certification is the notary's job, and this finding i
 about the register. The alarm is the roll-call's outcome rule on the
 `postmark-world2-notary.timer` row (`alarm_on_nonempty` on its lists, and
 `alarm_on_false` on `escrow_checked` — a read that could not run is never a
-clean town).
+clean town). The escrow list holds only **judgeable** zeros: a commons mark
+locked at a window whose town sha the escrow projection never held — every
+window before 181, migration 014's first ingest — is **unjudgeable**, written
+on the line as `escrow_unjudgeable` with the oldest projected sha beside it,
+and printed by the row's `report_counts` as a count, never an alarm
+(postmark#2935; before it, 227 such marks alarmed every morning for eight
+nights while the true unbacked count was zero).
 
 At the G1 swap the class becomes structurally impossible — the fold writes what
 the candle locked — and the read stays as the detector.
