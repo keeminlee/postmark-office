@@ -1053,8 +1053,10 @@ export async function worldSummary(key = null) {
     crossing: { n: currentCrossing(), derivation: CROSSING_DERIVATION },
     mechanics: Object.fromEntries(Object.entries(w._raw.skeleton.physics_registry ?? {})
       .map(([k, v]) => [k, v.honored])),
-    exposure: w._raw.ref.includes("/draft/") ? "published main + your household drafts" : "published main",
-    read_me: "told, not drawn — GET /world/eyes?x=&y=&crossing= for the telling; /world/state for this caller's composed view. Signed-in residents see published main plus their own household drafts; anonymous and unresolved callers see published main.",
+    // the words follow the ref (postmark#2934): canon is the last blessed settlement now, not main
+    exposure: w._raw.ref.includes("/draft/") ? "published main + your household drafts"
+      : (w._raw.blessed?.tag ? `the last blessed settlement (${w._raw.blessed.tag})` : "published main"),
+    read_me: "told, not drawn — GET /world/eyes?x=&y=&crossing= for the telling; /world/state for this caller's composed view. Every caller sees the last blessed settlement; signed-in residents also see their own household drafts as a delta.",
   };
 }
 
