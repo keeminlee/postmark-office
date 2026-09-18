@@ -23,12 +23,13 @@ import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isPrincipal } from "./ops.mjs";
+import { nextSettlementAttemptAt } from "./settlements.mjs";
 import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 import {
   // draftDeltaForKey is reached through world-journal's draftsForKey, which unions it with the live log (POS-5 slice 1)
+  blessedRef,
   draftBranch,
   draftRefForKey,
-  freshestMainRef,
   mainRef,
   materializeAtRef,
   publishedSkeleton,
@@ -98,7 +99,10 @@ const _worlds = new Map(); // ref+sha -> assembled composed view
 // whole change exists to end.
 function engineDir() {
   try {
-    return materializeAtRef(WORLD_CLONE, freshestMainRef(WORLD_CLONE), "tools");
+    // At the BLESSED ref (postmark#2934): the engine that folds a settlement is
+    // the engine that settlement was blessed with — the site already runs the
+    // pinned package the same way ("the pin follows the blessing", POS-55).
+    return materializeAtRef(WORLD_CLONE, blessedRef(WORLD_CLONE), "tools");
   } catch (e) {
     console.error(`[world] engine materialise FAILED (${String(e?.message ?? e).slice(0, 120)}) — falling back to the working tree, which may be a draft branch`);
     return WORLD_CLONE;
@@ -142,7 +146,7 @@ async function world() {
   // receipt stamps the answer with the sha it was folded from, and reading it
   // back out of `publishedState` would be a second `git show` of a 1 MiB
   // world-state.json on every focus. It is already in hand here; carry it.
-  assembled._raw = { worldState, skeleton, ref: selected.ref, sha: selected.sha };
+  assembled._raw = { worldState, skeleton, ref: selected.ref, sha: selected.sha, blessed: selected.blessed ?? null };
   _worlds.set(selected.ref, { sha: selected.sha, world: assembled });
   _places.clear(); // place words are a fold over these marks — a new world, new names
   return assembled;
@@ -1740,6 +1744,23 @@ export async function pointWithinMarkFn() {
 }
 
 export async function worldStateRaw() { return (await world())._raw.worldState; }
+
+// THE WORLD READ'S HEADER (postmark#2934): which settlement this answer stands
+// on, whether main holds a candidate the keeper has not accepted, and when the
+// next attempt is — the viewer's chip already counts down to that instant.
+// Read off the fold's own `blessed` record, so the header and the marks beside
+// it come from ONE resolution, never a second `git` read that could disagree.
+export async function worldCanon() {
+  const b = (await world())._raw.blessed ?? null;
+  return {
+    as_of_settlement: b?.n == null ? null : `S${b.n}`,
+    canon_ref: b?.ref ?? null,
+    canon_sha: b?.sha ?? null,
+    candidate_ahead: b?.candidate_ahead ?? null,
+    next_attempt_at: nextSettlementAttemptAt(),
+    ...(b?.disclosed ? { disclosed: b.disclosed } : {}),
+  };
+}
 export async function worldSkeletonRaw() { return (await world())._raw.skeleton; }
 // B1: the signed-in draft overlay's journal half comes from `claims` + the
 // withdraw acts under W2_GUARDS=1; the SKETCHBOOK half is unchanged either way
