@@ -6,9 +6,30 @@
 // `git for-each-ref … --format` hands back, the windows are the store's real
 // rows for the week of S71 (measured 2026-09-18 on prod, read-only).
 //
-// ── THE FLIP, run 2026-09-17 against commit <sha> of this branch ────────────
+// ── THE FLIPS, run 2026-09-17 against commit 3b5526c of this branch ─────────
 //
-// (recorded after the run — see the commit that follows this file)
+// Two, because the tool holds two rules a reader could get wrong silently.
+//
+// 1 · the tag-object trap. In `settlementRowsFrom`, replace
+//       const tag_sha = annotated ? l.peeled : l.sha;
+//     with
+//       const tag_sha = l.sha;
+//     → 2 of 13 red:
+//       not ok - an annotated tag yields the PEELED commit as tag_sha — never the tag object
+//           actual: '9b5e294f52d25e6cc0dd61748c332215f3cd16c2'   (S71's tag OBJECT)
+//           expected: '1984062faa76f0b835f316ca0f60a47676a98c5b' (the commit it blesses)
+//       not ok - only settlement/S<n> counts, and the rows come back in number order …
+//           (S9 and S10 no longer share a sha: two tag objects, one commit)
+//
+// 2 · the boundary. In `windowFor`, replace `c <= t` with `c < t`
+//     → 1 of 13 red:
+//       not ok - a publish at the exact close belongs to the window that just closed …
+//           actual: 193, expected: 194
+//     S47 is the real case: its sweep committed at 2026-08-26T05:45:16Z, the
+//     second window 150 closed.
+//
+// Each restored with `git checkout -- world2/tools/settlements-backfill.mjs`;
+// `git diff --exit-code` clean; 13/13 green again.
 //
 // Run: node --test test/settlements-backfill.test.mjs
 

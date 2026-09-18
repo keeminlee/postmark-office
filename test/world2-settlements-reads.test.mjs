@@ -31,11 +31,39 @@
 // table on prod against the clone's tags — is `settlements-backfill.mjs
 // --verify`, which needs a store and a checkout.
 //
-// ── THE FLIP, run 2026-09-17 against commit <sha> of this branch ────────────
+// ── THE FLIP, run 2026-09-17 against commit 3b5526c of this branch ──────────
 //
-// (recorded after the run — see the commit that follows this file)
+// In `src/world2-serve.mjs § /world2/settlements`, point the twin at the tree:
+// replace the table read
 //
-// Restore with `git checkout -- src/world2-serve.mjs`.
+//     const { rows } = await p.query(
+//       `SELECT number, tag_sha, published_at, window_id, blessed_at
+//        FROM settlements ORDER BY number DESC`);
+//
+// with 1.0's own git half —
+//
+//     const rows = (await import("./settlements.mjs")).readSettlementTags(WORLD_CLONE)
+//       .map((r) => ({ number: Number(r.tag.slice("settlement/S".length)), tag_sha: r.sha,
+//                      published_at: r.date, window_id: null, blessed_at: null }));
+//
+// and, with WORLD_CLONE at the shared world clone (S71 newest), 10 of these 12
+// go red — among them:
+//
+//   not ok - THE PLANTED ROW: a settlement that exists only in the store reaches the answer
+//       the twin did not see `settlement/S9001` — it is reading a tree
+//   not ok - THE QUERY COUNT: the door opened `settlements`
+//       a door that read the tree would open no `settlements`
+//   not ok - `sha` is the WHOLE blessed commit, and 1.0's `--short` is its prefix
+//       (the tree answers `1984062f`, eight characters)
+//   not ok - each row carries `window` and `blessed_at` beside 1.0's three fields
+//       (the tree has neither)
+//
+// The two that stay green are the two that do not ask the door: the shared
+// parser's own refusals, and the viewer's guard (a tree read still satisfies
+// `body.current || Array.isArray(body.recent)` — a shape check, by design).
+//
+// Restored with `git checkout -- src/world2-serve.mjs`; `git diff --exit-code`
+// clean; 12/12 green again.
 //
 // Run: node --test test/world2-settlements-reads.test.mjs
 
