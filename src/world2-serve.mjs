@@ -68,6 +68,9 @@ import { WORLD_CLONE, placeWordsFrom, markPage } from "./world.mjs";
 // 1.0's own backed row, imported rather than restated — see portfolio-reads.mjs
 // § THE DECISIONS ARE NOT RE-EXPRESSED HERE.
 import { backedRow } from "./world-stake.mjs";
+// 1.0's own settlements rules — which tags count, the order, the cap — imported
+// rather than restated; see § THE SETTLEMENTS TWIN below.
+import { settlementsFrom } from "./settlements.mjs";
 import { CROSSING_DERIVATION, currentCrossing } from "./crossings.mjs";
 import { actorRoster } from "./human-actor.mjs";
 import { stopDepartures } from "./world-movement.mjs";
@@ -512,6 +515,70 @@ export async function world2Serve(path, searchParams, { p: injected = null } = {
       `SELECT id, opens_at, closes_at, status, law_sha, town_sha, cleared_at, receipts
        FROM windows ORDER BY id DESC LIMIT 20`);
     return { code: 200, body: { what: "the candle's ledger — newest first, receipts carried", windows: rows } };
+  }
+
+  // ── THE SETTLEMENTS TWIN (postmark#2897, POS-104 box 4) ───────────────────
+  //
+  // `GET /world/settlements` out of the `settlements` table instead of out of
+  // the world clone's tags. Keyless, exactly as 1.0 is: which settlements have
+  // landed is the most public fact the town has.
+  //
+  // THE DECISIONS ARE 1.0'S OWN, IMPORTED. `settlementsFrom` is the pure half
+  // of `src/settlements.mjs` — which rows count, ordered by NUMBER and never by
+  // date or by the order the store hands them over, `current` = the highest
+  // number that landed, a gap left as the refusal it was, and the recent-list
+  // cap. The store rows are rendered into the exact `{tag, sha, date}` lines
+  // `readSettlementTags` produces from git, and handed to the same function, so
+  // a changed rule moves both doors or neither. Nothing here decides anything.
+  //
+  // TWO REPRESENTATIONS DIFFER FROM 1.0 AND BOTH ARE SAID HERE:
+  //   · `sha` is the WHOLE commit sha. 1.0 prints `rev-parse --short`, whose
+  //     length is git's auto-abbreviation for the clone at hand (8 today) —
+  //     a value that grows with the repo. The store keeps the commit whole and
+  //     the twin serves it whole; 1.0's short is a prefix of it, always.
+  //   · `date` is the same INSTANT rendered in UTC, `YYYY-MM-DDTHH:MM:SSZ`. 1.0
+  //     prints `%cI` in the COMMITTER's own offset — `-04:00` for the 37
+  //     keeper-era tags (S1–S43, committed from an EDT machine), `Z` for the 34
+  //     box-era ones. A timestamptz keeps the instant and not the offset. No
+  //     day boundary moves: the latest EDT commit of any day is 16:08.
+  //
+  // WHAT THE STORE CARRIES THAT THE TAG LIST CANNOT is on each row beside 1.0's
+  // three fields: `window` (the candle window that crossing closed; null for
+  // every tag older than the store's first window) and `blessed_at` (the tag
+  // object's own date — the keeper's bless, which 1.0 conflates with the push).
+  //
+  // FRESHNESS NAMES ITS SOURCE. A row exists once `settlements-backfill.mjs
+  // --apply` ran after the tag landed, and the office's tick runs it every
+  // 15 minutes right after the world fetch that carries the tag in
+  // (deploy/office-tick.sh § settlements-on-tick, Wright-ruled 2026-09-17 on
+  // postmark#2897). So `current.n` is at most one tick behind a bless — the
+  // same freshness 1.0's own tag read has always had — and `what` says so.
+  if (path === "/world2/settlements") {
+    const { rows } = await p.query(
+      `SELECT number, tag_sha, published_at, window_id, blessed_at
+       FROM settlements ORDER BY number DESC`);
+    // The whole-second UTC form, with no milliseconds: byte-equal to `%cI` for
+    // a commit whose committer sat on UTC, the same instant for one who did not.
+    const isoZ = (t) => (t == null ? null : new Date(t).toISOString().replace(/\.\d{3}Z$/, "Z"));
+    const extra = new Map(rows.map((r) => [Number(r.number), {
+      window: r.window_id == null ? null : Number(r.window_id),
+      blessed_at: isoZ(r.blessed_at),
+    }]));
+    const lines = rows.map((r) => ({ tag: `settlement/S${r.number}`, sha: r.tag_sha, date: isoZ(r.published_at) }));
+    const { current, recent } = settlementsFrom(lines);
+    const withStore = (s) => (s == null ? null : { ...s, ...extra.get(s.n) });
+    return { code: 200, body: {
+      what: "which settlements have actually LANDED, from the store's `settlements` table — one row per "
+        + "`settlement/S<n>` tag, written after the keeper's tag lands, the tags kept as the git-side receipt. "
+        + "`n`, `sha`, `date` are 1.0's own fields under 1.0's own rules (src/settlements.mjs); `sha` is the "
+        + "blessed COMMIT in full where 1.0 abbreviates it, and `date` is the crossing's push in UTC. "
+        + "`window` is the candle window that crossing closed (null before the store's first window); "
+        + "`blessed_at` is the tag's own date, the keeper's bless. `current.n` is the newest number the "
+        + "table holds — as current as the office's tick, which runs settlements-backfill.mjs right after "
+        + "its world fetch, so at most ~15 minutes behind a bless.",
+      current: withStore(current),
+      recent: recent.map(withStore),
+    } };
   }
 
   if (path === "/world2/law") {

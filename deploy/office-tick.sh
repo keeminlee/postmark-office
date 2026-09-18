@@ -88,6 +88,25 @@ trap 'rm -rf "$SNAP"' EXIT
   git clone --local --quiet "$TOWN_CLONE" "$SNAP/town"
 ) 9>>"$LOCK"
 
+# ── settlements-on-tick (postmark#2897, Wright-ruled 2026-09-17) ─────────────
+# The store's `settlements` row FOLLOWS the keeper's tag, and the world fetch
+# under the lock above is what carries the tag in: measured 2026-09-17, a plain
+# `git fetch --prune origin` re-follows an annotated tag whose commit is already
+# local (S71 deleted locally, back as a `tag` object on the next plain fetch).
+# So the office learns of a blessing within one tick of it, which is exactly
+# the freshness 1.0's own tag read has had all along ("tags ride the tick's
+# existing fetch", src/settlements.mjs). Outside the lock, because the tool
+# reads refs and a Postgres, never the clone's working tree, and the lock's
+# hold is what the write path waits on. Idempotent: a present row is skipped,
+# a moved tag is REFUSED with its number and nothing partial lands. NON-FATAL
+# like the mint and the world hydrate — the tick's real work never waits on
+# the store — and its one receipt line lands in this journal either way.
+if settled="$(node world2/tools/settlements-backfill.mjs --apply --prod --quiet --world-repo "$WORLD_CLONE" 2>&1)"; then
+  echo "[office-tick] settlements: $settled"
+else
+  echo "[office-tick] settlements row NOT written (non-fatal) — $settled — the next tick tries again; world2/tools/settlements-backfill.mjs --verify says where the table stands" >&2
+fi
+
 # ── outside the lock: derive from the frozen snapshot (however long) ─────────
 node src/hydrate.mjs --town "$SNAP/town" --db office.db.new
 mv -f office.db.new office.db
