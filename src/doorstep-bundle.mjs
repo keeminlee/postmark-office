@@ -194,7 +194,7 @@ export async function doorstepBundle(handle, ctx = {}) {
     // still lacks. It retires itself the day the list empties.
     try {
       const { paperGaps } = await import("./household-apex.mjs");
-      const gaps = await paperGaps(handle, { db, clone });
+      const gaps = await paperGaps(handle, { db, clone, key });
       if (gaps.length) d.settling_in = {
         note: "your house is still settling in — this block disappears as the list empties",
         next: gaps,
@@ -213,7 +213,7 @@ export async function doorstepBundle(handle, ctx = {}) {
   // itself rides every read — it is what the public bundle already publishes —
   // but its gap-shaped half is gated on the same ownership test above.
   try {
-    const ns = await nextStepsFor(db, meta, handle, clone, { own });
+    const ns = await nextStepsFor(db, meta, handle, clone, { own, key });
     if (ns?.steps?.length) d.next_steps = ns;
   } catch { /* garnish only */ }
 
