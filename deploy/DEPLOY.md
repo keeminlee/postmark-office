@@ -115,6 +115,16 @@ the deploy **adopts** rather than reinstalls — this box has served the town fo
 months, its install is correct by demonstration, and the first auto-deploy is
 the wrong moment to tear it down. If it is in fact wrong, the probe fails loudly.
 
+**`sharp` is a native dependency** (postmark#2940, the media door's small
+copies): the lockfile pins a prebuilt `@img/sharp-linux-x64` + libvips for the
+box, so `npm ci` needs no compiler — but it does need the network to fetch
+that binary, and a lockfile change is what triggers the reinstall above. The
+office loads it lazily: a box whose binary failed to land still opens the
+door and logs `no small copies` on each upload instead of refusing it.
+The one-time backfill for originals that predate the copies is
+`tools/media-thumbnails-backfill.mjs` (dry by default; `--apply` with the R2
+env), run by hand after the ship.
+
 ### Rehearsing, and the redeploy lane
 
 - **`workflow_dispatch` → target `dev`** deploys a tag to `/srv/postmark-office-dev`
