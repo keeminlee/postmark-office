@@ -673,13 +673,21 @@ test("world_leave_mark law bounces keep their exact defect through REST and MCP"
     body: JSON.stringify(mark),
   });
   assert.equal(rest.status, 422);
-  assert.equal((await rest.json()).defect, "body is 163 chars; the cap is 150");
+  const restBounce = await rest.json();
+  assert.equal(restBounce.defect, "body is 163 chars; the cap is 150");
 
   const { body } = await rpc("tools/call", { name: "world_leave_mark", arguments: mark });
   assert.equal(body.result.isError, true);
   const mcp = JSON.parse(body.result.content[0].text);
   assert.equal(mcp.code, 422);
   assert.equal(mcp.defect, "body is 163 chars; the cap is 150");
+  // #2918: the split rides the hint, and the hint reaches BOTH doors in the same
+  // words — field names, this mark's id in parent_id, no tool name (POS-101).
+  for (const hint of [restBounce.hint, mcp.hint]) {
+    assert.match(hint, /kind: "predicated"/);
+    assert.match(hint, /parent_id: "wright\/too-long"/);
+  }
+  assert.equal(restBounce.hint, mcp.hint, "one sentence at both doors");
 });
 
 // ── argument validation at the door (the little-bird finding, 2026-07-20) ───

@@ -299,6 +299,25 @@ test('F5 · OPERATIONS.md: "REST: stable/simple for frozen consumers" — the RE
   // golden says.
   assert.equal(full.acts.find((a) => a.fields && "pot" in a.fields)?.fields?.preview?.type, "boolean",
     "the live stake card still takes preview — the confirmation step the founder ruled is only live while the card advertises it");
+  // ⚑ REGENERATED 2026-09-18 FOR #2921 (POS-106), and named here for the same
+  // reason. What grew: the window act's card gained `file_path` — the pane read
+  // from a file the town already holds, the way upload_media takes image_path.
+  // What went: `html.required`, because html is now ONE OF TWO roads and a card
+  // still marking it required would refuse a lawful file_path call. The capture
+  // diff, key by key: +2 (`fields/file_path/{type,description}`), −1
+  // (`fields/html/required`), 0 retyped. The removal is the one the shape rule
+  // names, so it is said out loud rather than folded into "additive": a pane
+  // that read `fields.html.required` off this answer now reads undefined, which
+  // is the truth of the door. PSA for the release notes: "household do: window
+  // takes file_path — hang the pane from a file in your own house instead of
+  // re-sending it; html is no longer required, one of the two is."
+  const windowCard = frozen.acts.find((a) => a.fields && "blueprint" in a.fields);
+  assert.ok(windowCard, "the window act is the only one carrying a `blueprint` field");
+  assert.equal(windowCard.fields.file_path?.type, "string");
+  assert.equal(windowCard.fields.html?.required, undefined, "the frozen shape no longer marks html required");
+  const liveWindow = full.acts.find((a) => a.fields && "blueprint" in a.fields);
+  assert.equal(liveWindow?.fields?.file_path?.type, "string", "the live window card takes file_path");
+  assert.equal(liveWindow?.fields?.html?.required, undefined, "and the live card does not mark html required — a card that did would refuse the road it advertises");
 });
 
 test(`F5c · and the answer stays BOUNDED — REST under ${REST_CEILING}B, the connector's bare answer under ${SLIM_CEILING}B`, async () => {

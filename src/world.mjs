@@ -2760,6 +2760,30 @@ async function journalWithdraw({ by, slug, household }, { crossing = currentCros
   } finally { try { db.close(); } catch { /* already gone */ } }
 }
 
+// ── THE OVER-CAP BOUNCE TEACHES THE SPLIT (#2918; Keemin, 2026-09-17) ───────
+//
+// THE CAP STAYS. Tide asked 200 for places, Berthillon 250 for sorbet
+// descriptions ("not enough room for the gestural detail that makes a mark
+// actually read"), and the ruling was the number is law (MARKS.md 07-22 ruling,
+// `the-town/the-one-claim`) and "the bounce message should encourage them to
+// split the detailed descriptions into predicates". What the door owed was not
+// room but the shape the town already has for detail: THE MARK IS THE THING,
+// ITS DETAIL IS PREDICATED MARKS LAID ON IT — `kind: "predicated"` with
+// `parent_id` naming the mark (this door's own grammar, a few lines below:
+// "a predicated mark needs parent_id — the id of the mark it describes").
+//
+// So the hint names the split and carries the FIRST predicate's envelope with
+// this very mark's id already in `parent_id`, so the next call is the right
+// one. The defect sentence is untouched: three suites pin it, and it is the
+// measurement. Field names only, no tool name — the same payload stands at
+// POST /world/marks and at world_leave_mark, and a hint written in one door's
+// grammar is an instruction for a door the caller is not standing at (POS-101,
+// server.mjs § the send receipt). `by`/`slug` are already validated when this
+// fires, so the id the envelope names is the id the mark will have.
+export function overCapHint(by, slug) {
+  return `the cap is the law (MARKS.md 07-22 ruling: one claim per mark), and the town has a shape for the rest — the mark is the thing, its detail is predicated marks laid on it, one property each, each with its own ≤150-character body. Keep the one observation in this body, leave it, then lay the first detail as its own mark: { slug: "<detail>", kind: "predicated", parent_id: "${by}/${slug}", slot: "<the property>", value: "<its value>", body: "<one sentence about it>" }`;
+}
+
 // ── the write verb (credentialed) ────────────────────────────────────────────
 // world_leave_mark — leave a mark on the world. by/date are server-derived (never
 // the client's). A DRAFT COSTS NOTHING (Keemin-ruled 2026-08-22): this door's own
@@ -2782,7 +2806,7 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   if (!["sited", "parcel", "predicated", "naming"].includes(kind)) throw bounce(422, "kind must be sited, parcel, predicated, or naming", `got "${kind}"`);
   if (!body || !String(body).trim()) throw bounce(422, "a mark needs a body", "one present-tense observation, ≤150 characters");
   const bodyLength = [...String(body).trim()].length;
-  if (bodyLength > 150) throw bounce(422, `body is ${bodyLength} chars; the cap is 150`, "MARKS.md 07-22 ruling");
+  if (bodyLength > 150) throw bounce(422, `body is ${bodyLength} chars; the cap is 150`, overCapHint(by, slug));
   // The door refuses the word (B, ruled 2026-08-12; applied 2026-08-13). This
   // wrapper used to DEFAULT tier to "market" and pass it through to disk —
   // which is where every door-written carrier came from. Standing is the one
