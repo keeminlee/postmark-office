@@ -7,6 +7,7 @@
 //        [--apply [--prod]]     INSERT the rows the table lacks, one transaction
 //        [--verify]             the table against the checkout's tags, both ways; exit 1 on drift
 //        [--json]               machine-readable receipt on stdout
+//        [--quiet]              no plan table — the one receipt line only (the tick's mode)
 //
 //   env: WORLD2_PG_URL (the office's own connection — `office_api`, the pen
 //        018_settlements.sql grants INSERT to), or PG* as `w2_pgenv` exports
@@ -25,9 +26,11 @@
 // judgment — three publishes sit between S70 and S71. So the row can follow the
 // tag only by READING the tag, and this tool is that reader: run it after any
 // bless and it writes exactly the tags the table lacks; run it at the ship and
-// it writes S1 through S71. Which office step runs it, and when, is the lane's
-// stop on shape (the report on postmark#2897); until that is ruled the table is
-// as current as the last hand that ran this, and the twin says so.
+// it writes S1 through S71. WHO RUNS IT (Wright-ruled 2026-09-17, on the lane's
+// stop on shape): `deploy/office-tick.sh`, every 15 minutes, right after the
+// world fetch that carries the tag in — `--apply --prod --quiet`, non-fatal,
+// its one receipt line in the tick's journal. So the table is as current as
+// the office's tick, at most ~15 minutes behind a bless, and the twin says so.
 //
 // THE DRY RUN AND THE WRITE DERIVE THEIR ROWS FROM THE SAME FUNCTION. There is
 // no second path that could disagree with the rehearsal (backfill-register.mjs's
@@ -188,7 +191,7 @@ function render(plan, extra, { dbName, user, repo, mode }) {
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split(/[\\/]/).pop())) {
-  const apply = flag("apply"), verify = flag("verify"), json = flag("json");
+  const apply = flag("apply"), verify = flag("verify"), json = flag("json"), quiet = flag("quiet");
   if (apply && verify) { console.error("--apply and --verify are two different questions; ask one"); process.exit(2); }
   const mode = apply ? "APPLY" : verify ? "VERIFY" : "dry-run";
 
@@ -238,9 +241,10 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split(/[\\/]/).p
     const fresh = plan.filter((r) => r.state === "new");
 
     const text = render(plan, extra, { dbName: who.d, user: who.u, repo, mode });
-    if (!json) console.log(text);
+    if (!json && !quiet) console.log(text);
 
     let wrote = 0, verdict = "ok";
+    if (quiet && !apply && !verify) console.log(text.split(NL)[1]);   // the census line, nothing else
     if (conflicts.length) {
       verdict = "CONFLICT";
       console.error(`${NL}REFUSED: ${conflicts.length} tag(s) moved — ${conflicts.map((r) => `S${r.number}`).join(", ")}. A blessing is canon; a moved tag is a person's finding, not a row to rewrite.`);
@@ -254,7 +258,9 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split(/[\\/]/).p
       }
       await client.query("COMMIT");
       const { rows: [{ n }] } = await client.query("SELECT count(*)::int AS n FROM settlements");
-      console.log(`${NL}wrote ${wrote} row(s); the table now holds ${n} (tags in the checkout: ${derived.length})`);
+      // The receipt names what moved AND what stands, so a tick that wrote
+      // nothing still says so with the number the table is at.
+      console.log(`${quiet ? "" : NL}wrote ${wrote} row(s)${wrote ? ` — ${fresh.map((r) => `S${r.number}`).join(", ")}` : ""}; the table now holds ${n} (tags in the checkout: ${derived.length})`);
       if (drift.length) console.error(`${NL}${drift.length} present row(s) differ from their tag on a non-sha column and were LEFT ALONE (this tool never updates): ${drift.map((r) => `S${r.number}`).join(", ")}`);
     } else if (verify) {
       const missing = fresh.map((r) => r.number);

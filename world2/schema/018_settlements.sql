@@ -76,15 +76,17 @@
 -- prod today for 014's `escrow_projection` grants, which 014 never added to
 -- that list — a pre-existing red, named in the lane's report, not touched here.)
 --
--- ── WHO WRITES THE ROW, AND WHEN — NOT DECIDED BY THIS FILE ──────────────────
+-- ── WHO WRITES THE ROW, AND WHEN ─────────────────────────────────────────────
 --
 -- `world2/tools/settlements-backfill.mjs` derives the rows from a checkout and
 -- writes the ones the table lacks; run once at the ship it fills S1–S71, run
--- after any bless it adds exactly that tag. WHICH office step runs it after a
--- bless is the lane's STOP on shape (the brief placed it "in the same script"
--- as the tag push, and no office script pushes the tag). Until that is ruled,
--- the table is as fresh as the last hand that ran the tool, and the twin says
--- so in its own words.
+-- after any bless it adds exactly that tag. The lane stopped on WHICH office
+-- step runs it (the brief placed it "in the same script" as the tag push, and
+-- no office script pushes the tag); Wright ruled 2026-09-17: the office tick,
+-- `deploy/office-tick.sh § settlements-on-tick`, every 15 minutes right after
+-- the world fetch that carries the tag in, non-fatal, one receipt line in the
+-- tick's journal. So the table is at most one tick behind a bless — the same
+-- freshness 1.0's own tag read has always had — and the twin says so.
 --
 -- ── IDEMPOTENT. APPLY AS `world2_owner` by the runbook's step-1 idiom ────────
 --

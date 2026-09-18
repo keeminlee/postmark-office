@@ -539,12 +539,12 @@ export async function world2Serve(path, searchParams, { p: injected = null } = {
   // every tag older than the store's first window) and `blessed_at` (the tag
   // object's own date — the keeper's bless, which 1.0 conflates with the push).
   //
-  // FRESHNESS NAMES ITS SOURCE. A row exists once something ran
-  // `settlements-backfill.mjs --apply` after the tag landed; nothing in the
-  // office runs it on a schedule yet (postmark#2897, the lane's stop on shape).
-  // So `current.n` is the newest number the TABLE holds, and `what` says so —
-  // a reader comparing it with the tags sees the lag rather than inferring
-  // freshness from a number.
+  // FRESHNESS NAMES ITS SOURCE. A row exists once `settlements-backfill.mjs
+  // --apply` ran after the tag landed, and the office's tick runs it every
+  // 15 minutes right after the world fetch that carries the tag in
+  // (deploy/office-tick.sh § settlements-on-tick, Wright-ruled 2026-09-17 on
+  // postmark#2897). So `current.n` is at most one tick behind a bless — the
+  // same freshness 1.0's own tag read has always had — and `what` says so.
   if (path === "/world2/settlements") {
     const { rows } = await p.query(
       `SELECT number, tag_sha, published_at, window_id, blessed_at
@@ -566,7 +566,8 @@ export async function world2Serve(path, searchParams, { p: injected = null } = {
         + "blessed COMMIT in full where 1.0 abbreviates it, and `date` is the crossing's push in UTC. "
         + "`window` is the candle window that crossing closed (null before the store's first window); "
         + "`blessed_at` is the tag's own date, the keeper's bless. `current.n` is the newest number the "
-        + "table holds — the store is exactly as current as the last run of settlements-backfill.mjs.",
+        + "table holds — as current as the office's tick, which runs settlements-backfill.mjs right after "
+        + "its world fetch, so at most ~15 minutes behind a bless.",
       current: withStore(current),
       recent: recent.map(withStore),
     } };

@@ -176,3 +176,52 @@ test("a row in the table with no tag behind it is `extra` — the verify reds on
   const { extra } = planFrom(d, stored, WINDOWS);
   assert.deepEqual(extra, [9001]);
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 4 · THE CALLER — the tick, pinned in text (Wright-ruled 2026-09-17, postmark#2897)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// ⚑ A TEXT PIN, and the only instrument that can hold this — welcome-pass.test.mjs's
+// own precedent: nothing in a unit test can observe a shell script's order. The
+// ORDER is what the measurement fixed: the world fetch under the lock is what
+// carries the keeper's tag in (a plain `git fetch --prune origin` re-follows an
+// annotated tag on an already-present commit — S71 deleted locally, back as a
+// `tag` object on the next plain fetch), so the backfill must sit AFTER that
+// fetch. And OUTSIDE the lock, because the lock's hold is what the write path
+// waits on and the tool reads refs and a Postgres, never the working tree.
+
+import { readFileSync } from "node:fs";
+
+const tick = () => readFileSync(new URL("../deploy/office-tick.sh", import.meta.url), "utf8");
+
+test("the tick runs the backfill AFTER the world fetch and OUTSIDE the lock", () => {
+  const sh = tick();
+  const fetch = sh.indexOf('git -C "$WORLD_CLONE" fetch --prune -q origin');
+  const unlock = sh.indexOf(') 9>>"$LOCK"');
+  const run = sh.indexOf("world2/tools/settlements-backfill.mjs --apply");
+  assert.ok(fetch !== -1 && unlock !== -1 && run !== -1, "the tick must carry all three: the world fetch, the lock's close, the backfill");
+  assert.ok(fetch < run, "a backfill before the fetch reads yesterday's tags — the tag rides this fetch");
+  assert.ok(unlock < run, "inside the lock the backfill's Postgres round-trip lengthens every write-path wait");
+  // and the backfill precedes the derivation, so a slow store cannot be hidden
+  // behind a slow hydrate when someone reads the journal for the ordering
+  const hydrate = sh.indexOf("node src/hydrate.mjs");
+  assert.ok(run < hydrate, "the receipt line belongs beside the fetch it follows, before the long derivation");
+});
+
+test("the tick's backfill is the prod apply, quiet, on the clone the fetch moved", () => {
+  const sh = tick();
+  const line = sh.split(/\r?\n/).find((l) => l.includes("settlements-backfill.mjs --apply"));
+  assert.ok(line, "no backfill line in the tick");
+  assert.match(line, /--apply --prod --quiet/, "the tick types --prod on purpose (world2_dev is prod; the tool refuses the name otherwise) and --quiet for one receipt line");
+  assert.match(line, /--world-repo "\$WORLD_CLONE"/, "the checkout is the tick's own WORLD_CLONE — the one the fetch above just moved");
+  assert.match(line, /2>&1/, "a refusal's own words are captured into the receipt, not lost to a separate stream");
+});
+
+test("a refused or unreachable store cannot stop the tick's real work", () => {
+  const sh = tick().split(/\r?\n/);
+  const at = sh.findIndex((l) => l.includes("settlements-backfill.mjs --apply"));
+  const around = sh.slice(at, at + 5).join("\n");
+  assert.match(around, /^if settled=/m, "the run must be the condition of an `if`, never a bare command under `set -e`");
+  assert.match(around, /NOT written \(non-fatal\)/, "the failure branch says so out loud and continues");
+  assert.match(around, /\[office-tick\] settlements: \$settled/, "the success branch prints the tool's receipt line into the journal");
+});
