@@ -120,6 +120,24 @@ test("world_leave_mark pre-check names the exact body overage in Unicode charact
   await bounced({ ...validMark, body: "😀".repeat(151) }, "body is 151 chars; the cap is 150");
 });
 
+// #2918 (Keemin, 2026-09-17: the cap stays; the bounce teaches the split). The
+// FALSIFIER: a 151-character body's bounce carries the first predicate's
+// envelope — the door's own grammar (`kind: "predicated"`, `parent_id`), with
+// THIS mark's id already in parent_id so the next call is the right one. The
+// defect sentence is the measurement and stays exactly what the test above pins.
+test("world_leave_mark over the cap: the bounce names the split and carries the first predicate's envelope", async () => {
+  const e = await leaveMarkViaOffice(process.env.WORLD_CLONE, { ...validMark, slug: "sorbet", body: "x".repeat(151) }, one)
+    .then(() => assert.fail("expected a bounce"), (err) => err);
+  assert.equal(e.code, 422);
+  assert.equal(e.defect, "body is 151 chars; the cap is 150", "the measurement is untouched");
+  assert.match(e.hint, /predicated marks laid on it/, "the hint names the split — detail goes into predicates, not a longer body");
+  assert.match(e.hint, /kind: "predicated"/, "the envelope uses the door's own field: kind, not class");
+  assert.match(e.hint, /parent_id: "alpha\/sorbet"/, "the envelope names THIS mark as the parent — the next call is the right one");
+  for (const field of ["slug", "slot", "value", "body"]) assert.match(e.hint, new RegExp(`${field}: "`), `the envelope carries ${field}`);
+  assert.doesNotMatch(e.hint, /world_leave_mark|POST \/world/, "field names only — the same payload stands at both doors");
+  assert.match(e.hint, /MARKS\.md 07-22 ruling/, "the law is still cited");
+});
+
 test("world_leave_mark pre-check enforces predicated and naming slot/value law", async () => {
   await bounced({ ...validMark, slot: undefined }, "predicated marks need slot and value");
   await bounced({ ...validMark, value: undefined }, "predicated marks need slot and value");
