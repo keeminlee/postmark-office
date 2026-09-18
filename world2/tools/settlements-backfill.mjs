@@ -215,7 +215,13 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split(/[\\/]/).p
   if (!derived.length) { console.error(`${repo} carries no settlement/S<n> tag at all — a shallow or unfetched clone answers nothing, not zero`); process.exit(2); }
 
   const client = url ? new pg.Client({ connectionString: url }) : new pg.Client();
-  await client.connect();
+  try { await client.connect(); }
+  catch (e) {
+    // A wrong role, a wrong host, a store that is down: say so in one line and
+    // exit 2 (cannot run). A stack trace here would name the driver, not the store.
+    console.error(`cannot reach ${dbName}: ${String(e?.message ?? e)}`);
+    process.exit(2);
+  }
   let receipt;
   try {
     const { rows: [who] } = await client.query("SELECT current_user AS u, current_database() AS d");

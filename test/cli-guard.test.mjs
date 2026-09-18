@@ -168,6 +168,8 @@ const ROSTER = {
   "world2/tools/review-rule.mjs": { args: [], env: NO_PG, code: 2, needle: "review-rule.mjs: which claim?" },
   "world2/tools/roll-ingest.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: roll-ingest.mjs" },
   "world2/tools/seed-import.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: seed-import.mjs" },
+  // No --world-repo: stops on usage before any git or Postgres (postmark#2897).
+  "world2/tools/settlements-backfill.mjs": { args: [], env: NO_PG, code: 2, needle: "--world-repo <checkout> is required" },
   "world2/tools/snapshot-export.mjs": { args: ["--help"], env: NO_PG, code: 2, needle: "usage:" },
   "world2/tools/stamp-ingest.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: stamp-ingest.mjs" },
   "world2/tools/state-log-rederive.mjs": { args: [], env: { ...NO_PG, WORLD2_PG_URL: "postgres://nobody@localhost/not_scratch" }, code: 2, needle: "REFUSED · WORLD2_PG_URL must name" },
