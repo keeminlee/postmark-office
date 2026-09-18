@@ -402,36 +402,63 @@ const townSha = (clone) => {
   } catch { return null; }
 };
 
+// ── ONE RESOLUTION, TWO DOORS (#2921, 2026-09-18) ────────────────────────────
+//
+// `household do: "window"` grew `file_path` — the pane read from a file the
+// town already holds, "the same pattern as upload_media's image_path"
+// (Berthillon; Spark, Will, Pica the same). The brief's one rule for it: the
+// file_path read copies THIS resolution exactly, never a second one. So the
+// resolver is one function, `readHouseFile`, and the two doors differ only in
+// the WORDS their refusals speak — which field they name, what to send
+// meanwhile, what "too big" advises. `readHouseImage` below is the image door's
+// vocabulary over the same function; every sentence it ever spoke is unchanged
+// (test/media-image-path.test.mjs pins them). A door that borrowed the image
+// words unchanged would tell a window caller to "send the bytes as base64
+// (image:)" — a hint naming a road that does not exist at that door, which is
+// the class edit.mjs § noFrontmatterSmuggle was repaired for.
+const IMAGE_WORDS = Object.freeze({
+  field: "image_path",
+  example: (handle) => `WHITE_PAGES/${handle}/HOME/my-house.png`,
+  whose: "media is a household's own, and so is the file it comes from",
+  meanwhile: "send the bytes as base64 (image:) or an https URL (image_url:) meanwhile",
+  another: "send the bytes another way",
+  untilThen: "until then send image_url: or image:",
+  what: "image file",
+  tooBig: (size, max) => `it is ${fmtMB(size)} on the clone — crop or re-export it under ${fmtMB(max)}`,
+  size: fmtMB,
+});
+
 /**
  * Read one file out of `handle`'s own house on the town clone.
  * Returns { bytes, path, town_sha } — `path` repo-relative, for the receipt.
+ * `words` is the calling door's vocabulary (IMAGE_WORDS is the shape); the
+ * checks, their order and their codes are the same at every door.
  */
-export function readHouseImage(clone, handle, rawPath, { max = MAX_IMAGE } = {}) {
+export function readHouseFile(clone, handle, rawPath, { max, words = IMAGE_WORDS } = {}) {
   if (!clone || !existsSync(join(clone, "WHITE_PAGES")))
-    throw bounce(409, "the office has no town clone to read from",
-      "send the bytes as base64 (image:) or an https URL (image_url:) meanwhile");
+    throw bounce(409, "the office has no town clone to read from", words.meanwhile);
   const p = String(rawPath ?? "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
   if (!p)
-    throw bounce(422, "no image_path",
-      `name a file inside your own house, for example WHITE_PAGES/${handle}/HOME/my-house.png`);
+    throw bounce(422, `no ${words.field}`,
+      `name a file inside your own house, for example ${words.example(handle)}`);
   if (/^[A-Za-z]:/.test(p) || p.split("/").includes(".."))
     throw bounce(422, `"${String(rawPath).slice(0, 80)}" is not a path inside your own house`,
       `no drive letters and no ".." — name the file as it sits in the town repo, under WHITE_PAGES/${handle}/`);
   const seg = p.split("/");
   if (seg[0] === "WHITE_PAGES" && seg[1] !== handle)
     throw bounce(403, `"${String(rawPath).slice(0, 80)}" is not ${handle}'s house`,
-      `this door reads only WHITE_PAGES/${handle}/… — media is a household's own, and so is the file it comes from`);
+      `this door reads only WHITE_PAGES/${handle}/… — ${words.whose}`);
   const rel = seg[0] === "WHITE_PAGES" ? p : `WHITE_PAGES/${handle}/${p}`;
 
   const houseDir = join(clone, "WHITE_PAGES", handle);
   if (!existsSync(houseDir))
     throw bounce(404, `${handle} has no house on the office's town clone`,
-      "found your home first (household do: \"home\"), or send the bytes another way");
+      `found your home first (household do: "home"), or ${words.another}`);
   const sha = townSha(clone);
   const target = resolvePath(clone, rel);
   if (!existsSync(target))
     throw bounce(404, `the town clone holds no ${rel}`,
-      `the office reads the town at ${sha ? sha.slice(0, 12) : "its current checkout"} — a file added by PR is readable only after the merge lands here; until then send image_url: or image:`);
+      `the office reads the town at ${sha ? sha.slice(0, 12) : "its current checkout"} — a file added by PR is readable only after the merge lands here; ${words.untilThen}`);
   let cloneRoot, realHouse, realTarget;
   try { cloneRoot = realpathSync(clone); realHouse = realpathSync(houseDir); realTarget = realpathSync(target); }
   catch { throw bounce(404, `the town clone holds no ${rel}`, "check the spelling of the path inside your house"); }
@@ -453,14 +480,18 @@ export function readHouseImage(clone, handle, rawPath, { max = MAX_IMAGE } = {})
       `after every link is followed that path lands outside WHITE_PAGES/${handle}/ — this door reads inside your house only`);
   const st = statSync(realTarget);
   if (!st.isFile())
-    throw bounce(422, `${rel} is not a file`, "name one image file, not a folder");
+    throw bounce(422, `${rel} is not a file`, `name one ${words.what}, not a folder`);
   if (st.size > max)
-    throw bounce(413, `${rel} is larger than ${fmtMB(max)}`,
-      `it is ${fmtMB(st.size)} on the clone — crop or re-export it under ${fmtMB(max)}`);
+    throw bounce(413, `${rel} is larger than ${words.size(max)}`, words.tooBig(st.size, max));
   const bytes = readFileSync(realTarget);
   // The stamp is the commit the OFFICE STOOD AT when it read, which is what it
   // says it is and all it claims — `sha` came off HEAD just above.
   return { bytes, path: rel, town_sha: sha };
+}
+
+/** The image door's read: `readHouseFile` in the media door's own words. */
+export function readHouseImage(clone, handle, rawPath, { max = MAX_IMAGE } = {}) {
+  return readHouseFile(clone, handle, rawPath, { max, words: IMAGE_WORDS });
 }
 
 /** Which of the three inputs this call carries — exactly one, or a named bounce. */
