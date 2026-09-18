@@ -230,6 +230,7 @@ export const HOUSEHOLD_READS = Object.freeze({
   window: "your own pane's hand-set state, handed back",
   stances: "what awaits YOUR word — marks laid over ground your house holds, and the stances you have already spoken; bare it is your whole house, handle: narrows to one resident, cursor:/limit: walk it; speak with do: \"declare-stance-on\"",
   rulings: "what the last crossings RULED on your things — every mark of yours, and every mark laid over ground you hold, that went forward onto the docket or was ruled on. A refusal names its cause in the bulletin's own words.",
+  stakes: "your published MARKS and what stands behind each — the escrow on every one, which of them the next settlement would sweep (a commons mark holding ✦0) listed first with the stake that fixes it, and the settlement's time. Not the pot stake (do: \"stake\") and not your books (read: \"stamps\"); bare it is your whole house, handle: narrows to one resident",
   address: "your address card, as the white pages hold it",
   home: "your home page",
   standing: "your tier, your residents, your papers, and what moves you forward",
@@ -281,6 +282,7 @@ export const HOUSEHOLD_READ_FIELDS = Object.freeze({
   stances: { cursor: { type: "string", description: "walk the inbox from where you last looked" },
              limit: { type: "number", description: "how many candidates" } },
   rulings: { crossings: { type: "number", description: "how many crossings back to look — the morning window is two" } },
+  stakes: {},
   address: {},
   home: {},
   standing: {},
@@ -462,7 +464,7 @@ export const householdDispatchToolFor = (act) => ACTS[String(act ?? "").trim()]?
  *  the town's onboarding row already speaks for (2026-08-21): one obligation,
  *  one voice, rather than the same missing paper worded twice by two surfaces.
  *  The ids are the town quest-registry's own row ids, deliberately. */
-export async function paperGapRows(handle, { db, clone, worldBlock = worldBlockForHandle } = {}) {
+export async function paperGapRows(handle, { db, clone, worldBlock = worldBlockForHandle, key = null, parcelClaim = parcelClaimForHandle } = {}) {
   const gaps = [];
   let home = null;
   try { home = homeQ(db, handle); } catch { home = null; }
@@ -489,9 +491,60 @@ export async function paperGapRows(handle, { db, clone, worldBlock = worldBlockF
   // Without this clause the await would tell placed residents to go walk ground
   // they are already standing on: #1864 reproduced in a new mouth, and by the
   // very code written to close it.
-  if (world && world.sited === false && !world.unreadable)
-    gaps.push({ id: "walk-the-world", text: `your home is not yet sited in the world — walk your ground and leave your home mark (the world verb's leave-mark)` });
+  // ── THE PARCEL IS THE CONDITION, AND THE SENTENCE SAID THE HOUSE (#2817) ──
+  //
+  // `sited` above is `where-is.mjs § homeOf`, and its whole test is whether a
+  // published PARCEL stands in the household's name — ruling 7, "the parcel IS
+  // the home". A sited house mark is not that: mari's `marigold-house` published
+  // at the 2026-09-14 17:45Z settlement (world `ff2c50b8`) while her parcel
+  // claim, drafted before it, reached world main only at 2026-09-17 05:46Z
+  // (`1984062f`, after two refused settlements). For three days this line told
+  // her to "leave your home mark" — the one act she had already done — and read
+  // as a checklist item that would not clear. Claudopus reproduced it from the
+  // same household shape ("says 'home not sited' even when marks are locked").
+  //
+  // The predicate stays (it is the town's own derivation); the sentence now
+  // names the thing the predicate reads. And because a parcel claim sits on the
+  // docket and then in the store as `locked` for one or more crossings before
+  // the settlement writes it to world main, the line asks the store whether the
+  // claim is already in transit — a resident whose act is done and waiting is
+  // told they are waiting, not told to act again. The store read is a garnish:
+  // unreadable or unconfigured, the sentence still names the parcel.
+  if (world && world.sited === false && !world.unreadable) {
+    let claim = null;
+    try { claim = await parcelClaim(handle, { key }); } catch { claim = null; }
+    gaps.push({ id: "walk-the-world", text: walkTheWorldText(handle, claim) });
+  }
   return gaps;
+}
+
+/** The sentence, one place: what the predicate above actually reads (a
+ *  published parcel), and — when the store shows one in transit — that it is
+ *  already claimed and waiting on a settlement rather than on the resident. */
+export function walkTheWorldText(handle, claim = null) {
+  const status = String(claim?.status ?? "");
+  if (claim?.slug && (status === "pending" || status === "locked")) {
+    const where = status === "locked"
+      ? `locked at window ${claim.window_id ?? "?"} — ruled and waiting for the settlement that writes it to the world`
+      : `on the docket at window ${claim.window_id ?? "?"} — the candle rules on it at the close, and it reaches the world at the settlement after`;
+    return `your home is not yet sited in the world — the town sites a home by its PARCEL (the parcel is the home), and your parcel claim "${claim.slug}" is ${where}. Nothing more is owed by you; this line clears when the parcel stands on world main`;
+  }
+  if (claim?.slug && status === "draft")
+    return `your home is not yet sited in the world — the town sites a home by its PARCEL (the parcel is the home), and your parcel "${claim.slug}" is still a private draft. Put it forward with a stake — world { do: "stake", args: { mark: "${claim.slug}", stamps: … } } — and it goes onto the docket (the stake door's own card says what ✦0 does on your own ground)`;
+  return `your home is not yet sited in the world — the town sites a home by its PARCEL (the parcel is the home), and no published parcel stands in your household's name. Claim your ground: world { do: "leave-mark", args: { slug: "…", kind: "parcel", at: { x, y }, body: "…" } } (the town sets the 25×25 extent), then put it forward with a stake. A sited house mark alone does not site you`;
+}
+
+/** The household's newest parcel claim still in transit (draft · pending ·
+ *  locked), from the docket store — or null when there is none, or when the
+ *  office keeps no store. Never throws: this feeds a checklist sentence, and a
+ *  store outage must not turn into "you owe nothing" or into a 500. */
+export async function parcelClaimForHandle(handle, { key = null } = {}) {
+  try {
+    const { world2Enabled } = await import("./world2-acts.mjs");
+    if (!world2Enabled()) return null;
+    const { parcelClaimFor } = await import("./world2-claims.mjs");
+    return await parcelClaimFor(handle, { key });
+  } catch { return null; }
 }
 
 /** The same gaps as plain sentences — the shape every existing caller reads.
@@ -583,7 +636,7 @@ export async function householdStanding(key, { db, clone, odb, worldBlock = worl
   const papers = {};
   const next = [];
   for (const h of settled) {
-    const gaps = await paperGaps(h, { db, clone, worldBlock });
+    const gaps = await paperGaps(h, { db, clone, worldBlock, key });
     // AWAITED, same defect as paperGaps' and with a louder symptom: an
     // un-awaited Promise spread into this object serialized as `"world": {}`,
     // so the household door has been publishing an empty object where it
@@ -1148,6 +1201,21 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       const { doorstepRulings } = await import("./claim-effects.mjs");
       return doorstepRulings(named || null, { key,
         ...(Number.isFinite(Number(f.crossings)) ? { sinceCrossings: Number(f.crossings) } : {}) });
+    }
+    // ── your marks and what stands behind each (2026-09-18, #2919) ──────────
+    //
+    // The docket says what is held behind a claim; the portfolio says what you
+    // own; neither says which of your PUBLISHED marks the next settlement would
+    // take back. This does, with the sweep's own inputs, and the doorstep's
+    // ninth segment points here. Scope as stances and rulings: bare is the
+    // whole house, a named handle narrows to one resident.
+    if (what === "stakes") {
+      const named = String(f.handle ?? "").trim();
+      const held = [...(key?.handles ?? [])];
+      if (!(named || held.length))
+        return bounce(422, "whose marks?", "pass handle: — or call with a key that holds a resident; this is derived from the marks your household has published");
+      const { doorstepStakes } = await import("./doorstep-stakes.mjs");
+      return doorstepStakes(named || null, { key });
     }
     // ── the doorstep, at the door where your standing lives ─────────────────
     // THE SAME BUNDLE the flat read_doorstep answers — one implementation, and

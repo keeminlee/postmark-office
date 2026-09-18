@@ -804,8 +804,12 @@ test("F13b · and a send with NO nonce is byte-for-byte the receipt it always wa
     // comparing the two must see the difference rather than infer it from an
     // absent key — so one sentence was added that says whose question they
     // answer. The list moves by hand, and this comment is why.
+    // `next_crossing` joined 2026-09-18 (postmark#2922, Pica): the boat's
+    // number, when it sails, how many minutes off, and the sentence — beside
+    // `expected_crossing`, which stays because frozen consumers read it. One
+    // boat, two spellings; test/next-crossing.test.mjs holds them equal.
     assert.deepEqual(Object.keys(r),
-      ["letter_id", "commit", "standing", "expected_crossing", "logged", "pushed", "office_bookkeeping"],
+      ["letter_id", "commit", "standing", "expected_crossing", "next_crossing", "logged", "pushed", "office_bookkeeping"],
       "the receipt's shape is pinned; a key added without a reason reds here");
     odb.close();
   });

@@ -414,6 +414,15 @@ export async function docketEscrow(p) {
 }
 
 /**
+ * The same triple, on the office's own pool — for a reader that holds no pool
+ * of its own (the doorstep's `stakes` segment, postmark#2919). `p` is the test
+ * seam, exactly as `docketEscrow`'s is; the office never passes one.
+ */
+export async function escrowAtTownHead({ p: injected = null } = {}) {
+  return docketEscrow(injected ?? await pool());
+}
+
+/**
  * ONE ROW OF THE DOCKET. Pure, and exported so a falsifier can read it.
  *
  * `escrowLines`'s lesson, taken literally: a string composed at a call site

@@ -73,6 +73,7 @@ import { pathToFileURL } from "node:url";
 import { appendTownJournal, pendingRows, townLogEnabled } from "./town-journal.mjs";
 import { LADDER_NOTE, TENSE } from "./paper-fresh.mjs"; // the three words, borrowed rather than re-coined
 import { nextCrossing, outboxRelPath, validateLetter } from "./write.mjs";
+import { nextCrossingForReceipt } from "./crossings.mjs"; // #2922: the boat's number, minutes and sentence beside `expected_crossing`
 
 /** The one act this class carries, and the door that performs it. */
 export const MAIL_ACT = "send-letter";
@@ -409,6 +410,11 @@ export function duplicateReceipt(row, nonce) {
     commit: null,
     standing: STANDING,
     expected_crossing: nextCrossing(),
+    // THE SECOND SENTENCE LIVES HERE (#2922): a retry read after the crossing
+    // the first receipt named, for a letter still standing, is told "this
+    // crossing has sailed; yours goes at …" — the row's own written_at is what
+    // decides it, so the sentence is about this letter and not a guess.
+    next_crossing: nextCrossingForReceipt(Date.now(), { writtenAt: row.writtenAt ?? null }),
     logged: { seq: row.seq, settles_at: SETTLES_AT, written_at: row.writtenAt },
     pushed: false,
     duplicate: true,
@@ -478,6 +484,7 @@ async function sendRow(args, key, db, clone, odb, nonce) {
     commit: null,
     standing: STANDING,
     expected_crossing: nextCrossing(),
+    next_crossing: nextCrossingForReceipt(),   // #2922 — the same boat `expected_crossing` names, with its number, minutes and sentence
     logged: { seq, settles_at: SETTLES_AT },
     pushed: false,
     // ── WHAT commit AND pushed ARE ABOUT (walk #2 item 4, 2026-09-06) ───────

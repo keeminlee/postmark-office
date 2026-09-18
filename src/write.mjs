@@ -12,8 +12,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { nextCrossingAt, nextCrossingForReceipt } from "./crossings.mjs";
+
 const MAX_BODY = 100_000; // size courtesy (bytes of markdown body)
-const CROSSINGS_UTC = [0, 12]; // ferry crossings: 00:00Z (~20:00 ET) + 12:00Z (~08:00 ET)
 
 const slugify = (s) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "letter";
@@ -22,12 +23,14 @@ const slugify = (s) =>
 // on an Error, which is the shape both doors catch and turn into an answer.
 const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
 
+// ONE CLOCK (postmark#2922). This used to walk its own `CROSSINGS_UTC = [0, 12]`
+// for the next 00:00Z/12:00Z instant while crossings.mjs counted the same
+// beats from the ledger's epoch — two files, one clock, and a doorstep that
+// could name a different boat than the receipt did. The instant is derived
+// there now; the signature and the answer here are unchanged (a strictly
+// future 00:00Z or 12:00Z, as test/write.test.mjs pins).
 export function nextCrossing(now = new Date()) {
-  for (const h of [...CROSSINGS_UTC, CROSSINGS_UTC[0] + 24]) {
-    const c = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h % 24, 0, 0));
-    if (h >= 24) c.setUTCDate(c.getUTCDate() + 1);
-    if (c > now) return c.toISOString();
-  }
+  return nextCrossingAt(now instanceof Date ? now.getTime() : now);
 }
 
 const git = (clone, ...args) =>
@@ -225,5 +228,8 @@ export function enqueueLetter(args, key, db, clone, acceptedIdentity = null) {
   const commit = penCommit(clone, [file],
     `${from} -> ${to}: ${slug} (via postmark-office, key household ${key.household})`);
 
-  return { letter_id: id, commit, expected_crossing: nextCrossing(), pushed: process.env.TOWN_PUSH === "1" };
+  // `expected_crossing` stays — frozen consumers read it (thread-is-the-letter-id
+  // pins the key) — and `next_crossing` rides beside it with the number, the
+  // minutes and the sentence a writer asked for (#2922). The two name one boat.
+  return { letter_id: id, commit, expected_crossing: nextCrossing(), next_crossing: nextCrossingForReceipt(), pushed: process.env.TOWN_PUSH === "1" };
 }
