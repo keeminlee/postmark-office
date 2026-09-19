@@ -1,0 +1,46 @@
+[Unit]
+# THE OPERATOR DOOR (postmark#2786, ruled by Keemin 2026-09-14). NO TIMER, and
+# that is the whole of what makes it an act rather than a second clock.
+#
+# On 2026-09-14 window 188 closed at 05:45Z holding 29 locked claims its crossing
+# refused to fold on a world test. The test was fixed and merged by 09:1x; two
+# reruns of postmark-settlement.service at 13:21Z and 13:26Z refused
+# `clearing-did-not-run`, because the docket wait accepts only a window cleared
+# at or after the crossing's own start and nothing would close until 17:45Z. The
+# paired recovery — the sweep first, the candle while it waits — answered
+# "nothing due", because the open window was not due either. A correct tree and
+# an unfolded docket sat side by side for eight hours.
+#
+# Started BY A PERSON, and the journal then names the act by its own unit rather
+# than showing a second postmark-settlement.service run that no timer explains.
+# The receipt carries `by_hand: true` beside `source`, so a by-hand publication
+# can never be read back as a scheduled one.
+#
+#   sudo systemctl start postmark-settlement-by-hand.service
+#
+# It publishes the newest CLOSED window that still holds a locked claim with no
+# materialized mark, and refuses `nothing-unfolded` when the world already
+# carries everything. It never touches the OPEN window: closing a window early is
+# the candle's pen (`clearing-job.mjs --window N`) and was ruled out of this
+# door's scope.
+Description=Postmark settlement, BY HAND — an operator's rerun; publishes the newest unfolded window, no timer
+
+[Service]
+Type=oneshot
+# Everything below is postmark-settlement.service's, unchanged, plus the one
+# Environment line. Same user, same environment files, same ExecStart: a
+# by-hand crossing that ran a DIFFERENT script would be a second settlement
+# mechanism to keep in step, which is the thing this deliberately is not.
+User=meepo
+EnvironmentFile=/etc/postmark-office.env
+# WORLD2_CLEARING_URL — the clearing pen the retire step and the store-source
+# crossing hold. ONE file, shared with postmark-world2-clearing.service (office
+# #26, 2026-09-12).
+EnvironmentFile=-/etc/postmark-world2-clearing.env
+# THE ONE DIFFERENCE, and it is set HERE rather than passed on a command line so
+# that starting the unit is the whole of the operator's act — there is no way to
+# start this unit and not be on the by-hand door, and no way for the scheduled
+# unit to drift onto it.
+Environment=SETTLEMENT_BY_HAND=1
+WorkingDirectory=/srv/postmark-office
+ExecStart=/bin/sh /srv/postmark-office/deploy/settlement-auto.sh

@@ -19,10 +19,20 @@
 //   "the currently open window has closed" — waits twelve hours when the
 //     clearing already ran before the tool was reached.
 
+// ── AND THE OPERATOR DOOR (postmark#2786, ruled 2026-09-14) ──────────────────
+//
+// The four falsifiers at the foot of this file watch `--by-hand`, the second
+// door: the newest CLOSED window that is still UNFOLDED, for the operator whose
+// previous crossing published nothing. The first of them is the one that matters
+// most and it watches the OLD path — the timer's refusal, byte for byte —
+// because a second door is only safe while the first is untouched.
+
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { docketFor, toMs } from "../world2/tools/await-clearing.mjs";
+import {
+  clearingDidNotRunDetail, docketFor, newestWindow, nothingUnfoldedDetail, toMs, unfoldedDocket,
+} from "../world2/tools/await-clearing.mjs";
 
 const CROSSING_START = "2026-09-08T17:45:00Z";
 
@@ -121,4 +131,131 @@ test("an unparseable --since REFUSES rather than defaulting to the epoch", () =>
   // fallback to 0 — make every window qualify. Both are silent; the first waits
   // forever and the second folds the oldest docket in the store.
   assert.throws(() => docketFor(WINDOWS, "not-a-time"), /unparseable/);
+});
+
+// ── THE OPERATOR DOOR · `--by-hand` (postmark#2786) ──────────────────────────
+//
+// THE INSTANCE, AS A FIXTURE. On 2026-09-14 window 188 closed at 05:45Z holding
+// 29 locked claims whose crossing refused on a world test; the test was fixed
+// and merged by 09:1x; two reruns at 13:21Z and 13:26Z refused
+// `clearing-did-not-run` because nothing had cleared since 13:21Z and nothing
+// would until 17:45Z. THE SHAPE is the instance's; the shas and claim ids are
+// this fixture's own and are not claimed to be the store's — a fixture that
+// borrowed live values would decay at the next crossing.
+const BY_HAND_START = "2026-09-14T13:21:00Z";
+
+const INSTANCE = [
+  { id: 189, status: "open", cleared_at: null, town_sha: null },
+  { id: 188, status: "closed", cleared_at: "2026-09-14 05:45:44.112907+00", town_sha: "f1f1f1f1" },
+  { id: 187, status: "closed", cleared_at: "2026-09-13 17:45:44.906311+00", town_sha: "e0e0e0e0" },
+];
+
+/** The notary's read (`canon-locks.mjs § UNMATERIALIZED_SELECT`): locked, no mark. */
+const lockedUnmaterialized = (windowId, n) => Array.from({ length: n }, (_, i) => ({
+  claim_id: String(windowId * 100 + i), window_id: windowId,
+  claimant: `resident-${i}`, slug: `resident-${i}/a-mark`,
+}));
+
+const INSTANCE_UNFOLDED = lockedUnmaterialized(188, 29);
+
+test("FALSIFIER 1 · the timer's path is UNCHANGED — the instance still refuses, in the same words", () => {
+  // THE ONE THAT MATTERS MOST. The operator door is only safe while the guard it
+  // stands beside is untouched: relaxing "cleared at or after this crossing's
+  // start" is exactly how the 2026-08-26 starving crossing gets published under a
+  // fresh receipt. So the day's own state — 188 closed at 05:45Z, unfolded, 189
+  // open, a crossing starting at 13:21Z — is asserted to refuse, and the refusal
+  // is asserted BYTE FOR BYTE rather than by a regex over a word or two, because
+  // a message the operator reads at 13:21Z is the whole of what tells them which
+  // door they are standing at.
+  assert.equal(docketFor(INSTANCE, BY_HAND_START), null,
+    "nothing cleared at or after 13:21Z — the timer must still wait, and then refuse");
+
+  assert.equal(
+    clearingDidNotRunDetail({ waitedS: 240, since: BY_HAND_START, newest: newestWindow(INSTANCE) }),
+    "waited 240s and no window cleared at or after this crossing's start (2026-09-14T13:21:00Z). "
+    + "The newest window is 189 (open, cleared_at null). "
+    + "The candle has not locked this crossing's docket, so there is no delta to fold. Folding the previous "
+    + "window again would publish nothing and look like a quiet crossing, which is the 2026-08-26 starving "
+    + "shape with better paperwork.");
+});
+
+test("FALSIFIER 2 · --by-hand takes the UNFOLDED docket, and takes it because it is unfolded", () => {
+  // ARM ONE — the instance. Window 188 is the one holding 29 locked claims the
+  // world carries no mark for, and it is what an operator at 13:21Z should be
+  // handed.
+  const d = unfoldedDocket(INSTANCE, INSTANCE_UNFOLDED);
+  assert.equal(d.window, 188);
+  assert.equal(d.by_hand, true, "a by-hand publication must never be mistaken for a scheduled one");
+  assert.equal(d.town_sha, "f1f1f1f1");
+  assert.equal(d.cleared_at, "2026-09-14 05:45:44.112907+00");
+
+  // ARM TWO — AND THE FIRST ARM ALONE CANNOT FAIL. On the instance, 188 is both
+  // the newest closed window AND the unfolded one, so "take the newest closed
+  // window" and "take the newest UNFOLDED window" agree there, and a door that
+  // ignored the notary's read entirely would pass arm one. Here they disagree:
+  // 188 is published, 187 is not. The unfolded one wins.
+  const olderIsTheUnfoldedOne = unfoldedDocket(INSTANCE, lockedUnmaterialized(187, 2));
+  assert.equal(olderIsTheUnfoldedOne.window, 187,
+    "the choice is unfoldedness, not recency — 188 is newer and has nothing left to publish");
+});
+
+test("FALSIFIER 3 · --by-hand REFUSES a world that is already published, and names where the town is", () => {
+  // A by-hand sweep with nothing unfolded is not an error and not a success: it
+  // is the answer "the world already carries this". Publishing a second copy of
+  // a published window under a fresh receipt is the starving shape reached by the
+  // other door.
+  assert.equal(unfoldedDocket(INSTANCE, []), null);
+
+  assert.equal(
+    nothingUnfoldedDetail({ newest: newestWindow(INSTANCE) }),
+    "no closed window still holds a locked claim with no materialized mark, so there is nothing for a "
+    + "by-hand sweep to publish. "
+    + "The newest window is 189 (open, cleared_at null). "
+    + "Every closed window's claims are already materialized: the record this run would publish is the record "
+    + "the world already carries. Claims filed since the last close belong to the OPEN window, and closing that "
+    + "window early is the candle's act, not this one's.");
+});
+
+test("FALSIFIER 4 · --by-hand NEVER takes the open window", () => {
+  // Claims filed since the last close sit in the OPEN window, and they are the
+  // tempting thing to reach for at 13:21Z — an operator who wants "everything
+  // filed so far" is one flag away from asking this tool to fold a window the
+  // candle has not locked. Closing a window early is a different act with a
+  // different pen (`clearing-job.mjs --window N`) and was ruled out of this
+  // door's scope.
+  //
+  // THE FIXTURE PUTS THE ONLY UNFOLDED CLAIMS IN THE OPEN WINDOW and leaves
+  // every closed window published, so the sole lawful answer is the refusal.
+  assert.equal(unfoldedDocket(INSTANCE, lockedUnmaterialized(189, 4)), null,
+    "189 is open — its docket is not locked, and an unlocked docket is nobody's to fold");
+
+  // ── AND THE STATUS GUARD IS PROVED ON ITS OWN (reviewer, 2026-09-14) ───────
+  //
+  // THE ARM ABOVE DOES NOT PROVE WHAT IT CLAIMS, and this is the correction.
+  // Window 189 there carries `cleared_at: null`, so it is refused by the
+  // finite-instant filter two lines later, not by `status === "closed"` — drop
+  // the status test alone and that arm stays green. A guard nothing exercises is
+  // a guard that can be deleted by accident, and this one's own comment calls it
+  // law: the open window "is never any sweep's to take".
+  //
+  // So here is the shape that reaches the status test and nothing else: an open
+  // window carrying BOTH a `cleared_at` and the only unfolded claims. The store
+  // does not produce it — the candle writes `cleared_at` in the same act that
+  // closes the window — and that is the point. What a guard is for is the row
+  // that should not exist: a half-applied migration, a repair typed by hand at
+  // 05:52Z, a fixture somebody wrote from memory. The status is the law, so the
+  // status decides, and a stamp on an open window buys nothing.
+  const openWithAStamp = [
+    { id: 189, status: "open", cleared_at: "2026-09-14 13:30:00.000000+00", town_sha: "d0d0d0d0" },
+    { id: 188, status: "closed", cleared_at: "2026-09-14 05:45:44.112907+00", town_sha: "f1f1f1f1" },
+  ];
+  assert.equal(unfoldedDocket(openWithAStamp, lockedUnmaterialized(189, 3)), null,
+    "an OPEN window is refused by its status alone, however cleared it looks — and 188, the only closed "
+    + "window here, has nothing left to publish, so the answer is the refusal and not a fallback");
+
+  // And a closed window that never finished its transition is not a docket
+  // either, by the same rule the timer's path already holds. This is the other
+  // half of the pair: there the status passes and the instant refuses.
+  const halfway = [{ id: 189, status: "closed", cleared_at: null, town_sha: null }];
+  assert.equal(unfoldedDocket(halfway, lockedUnmaterialized(189, 4)), null);
 });

@@ -126,6 +126,25 @@ const receipt = {
   // the operator reading a refusal cannot tell which path refused.
   source: SOURCE,
 
+  // ── AND WHETHER A PERSON STARTED IT (postmark#2786, 2026-09-14) ────────────
+  //
+  // `true` only when the operator door was used: the docket was the newest
+  // CLOSED window still holding a locked claim with no materialized mark, rather
+  // than a window that cleared during this crossing's own wait. Two publications
+  // with identical channel counts mean different things depending on this field —
+  // one is the clock, one is somebody finishing a crossing the clock refused —
+  // and without it the history log cannot tell them apart afterwards.
+  //
+  // ON EVERY RECEIPT, `false` included, for `source`'s own reason one field up: a
+  // field that appears only when the answer is interesting teaches its reader
+  // that absence means "scheduled", and then the first receipt missing it for
+  // some other reason hands them a wrong answer about who published the town.
+  //
+  // Read from the mode the script decided, never inferred from the docket: a
+  // by-hand crossing that REFUSED before it reached a docket still has to say it
+  // was a person's act, or the journal and the receipt disagree about what ran.
+  by_hand: env("SETTLEMENT_BY_HAND") === "1",
+
   // ── WHAT A ROLLBACK CROSSING SWEPT UP BEFORE IT LOOKED (repair 1) ──────────
   //
   // A `git` crossing after a `store` one used to fold the store's leftover local
