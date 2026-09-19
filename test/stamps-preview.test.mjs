@@ -429,7 +429,7 @@ test("the rule the block quotes is the world record's own text, read from the ma
   // door quotes it, never its own prose." So this reads the MARK FILE, not the
   // door's copy of it. Skipped, never faked, when no world checkout is at hand:
   // a green tick that proved nothing would be worse than an honest absence.
-  const roots = [process.env.WORLD_CLONE, "G:/postmark/pool/world-1", "G:/postmark/postmark-world",
+  const roots = [process.env.WORLD_CLONE, "G:/postmark/pool/world-1", "G:/Postmark/repo-clones/wright/postmark-world",
     resolve(HERE, "..", "world-clone")];
   const rel = "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/postmark-edge/stake/stake-mark/mark.md";
   let text = null;

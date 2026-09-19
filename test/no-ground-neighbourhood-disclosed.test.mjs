@@ -8,7 +8,7 @@
 // none."
 //
 // MEASURED BEFORE ANYTHING WAS BUILT, against the live fold at
-// G:/Postmark/postmark-world for a handle holding no ground:
+// G:/Postmark/repo-clones/wright/postmark-world for a handle holding no ground:
 //
 //     standpoint.from  "<handle> has no ground on the map yet — the Origin"
 //     you.within       the-town/let-there-be-light, the-town/the-town-centre,

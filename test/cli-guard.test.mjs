@@ -117,7 +117,7 @@ const ROSTER = {
   // argument, so it reads `DEFAULT_DB` (`OFFICE_ROOT/world.db`) and never looks
   // at WORLD_STORE_DB — the key its three siblings do read. The proof therefore
   // exits 1 only where no `world.db` has ever been hydrated; on the box and on
-  // G:/Postmark/office (world.db, hydration_status OK, 1406 nodes) it exits 0
+  // G:/Postmark/repo-clones/wright/office (world.db, hydration_status OK, 1406 nodes) it exits 0
   // and this goes red. It cannot be fixed from the roster: making it honest
   // needs either a second expected code here or the tail reading a path, and
   // both are additions this train is not for. Left named rather than papered
